@@ -2,6 +2,7 @@ pub mod commands;
 pub mod core;
 pub mod crypto;
 pub mod db;
+pub mod id;
 pub mod ai;
 pub mod scheduler;
 pub mod error;
