@@ -147,7 +147,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libglib2.0-dev libgobject-introspection1
+          sudo apt-get install -y libglib2.0-dev libgirepository1.0-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
