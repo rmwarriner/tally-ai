@@ -26,8 +26,10 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    globals: true,
     coverage: {
       provider: "v8",
+      exclude: ["src/main.tsx", "vite.config.ts"],
       thresholds: {
         lines: 80,
         functions: 80,

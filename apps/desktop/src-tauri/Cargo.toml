@@ -21,7 +21,13 @@ tokio.workspace = true
 thiserror.workspace = true
 ulid.workspace = true
 argon2.workspace = true
+bip39.workspace = true
+rand = "0.8"
 tauri-plugin-shell = "2"
+
+[dependencies.libsqlite3-sys]
+version = "0.30"
+features = ["bundled-sqlcipher"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
