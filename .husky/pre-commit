@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+
+# T-008: pre-commit hook — cargo test + vitest + 80% coverage gate
+
+set -e
+
+echo "→ Running Rust tests..."
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+echo "→ Running TypeScript tests with coverage..."
+pnpm --filter @tally/desktop exec vitest run --coverage
+
+echo "✓ All checks passed"

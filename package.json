@@ -1,0 +1,22 @@
+{
+  "name": "tally-ai",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @tally/desktop dev",
+    "build": "pnpm --filter @tally/desktop build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "prepare": "husky"
+  },
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=10"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "@tauri-apps/cli"]
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}
