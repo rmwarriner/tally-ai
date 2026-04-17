@@ -1,0 +1,20 @@
+# Tally.ai Code Owners
+
+# Default owner for everything
+* @rmwarriner
+
+# Frontend specific
+/apps/desktop/src @rmwarriner
+/packages/core-types @rmwarriner
+
+# Backend/Rust
+/apps/desktop/src-tauri @rmwarriner
+
+# Tests
+*.test.ts @rmwarriner
+*.test.tsx @rmwarriner
+*.spec.rs @rmwarriner
+
+# Configurations
+.github/ @rmwarriner
+CLAUDE.md @rmwarriner
