@@ -780,6 +780,117 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_envelope_spent_decreases_on_credit_refund() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_envelope_credit.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool).await.expect("Migrations should run");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        sqlx::query(
+            "INSERT INTO households (id, name, timezone, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind("h6")
+        .bind("Test Household")
+        .bind("America/Chicago")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert household");
+
+        sqlx::query(
+            "INSERT INTO accounts (id, household_id, name, type, normal_balance, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("acc6")
+        .bind("h6")
+        .bind("Groceries")
+        .bind("expense")
+        .bind("debit")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert account");
+
+        sqlx::query(
+            "INSERT INTO envelopes (id, household_id, account_id, name, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("env6")
+        .bind("h6")
+        .bind("acc6")
+        .bind("Groceries Budget")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert envelope");
+
+        let period_start = now - (now % 86400000);
+        let period_end = period_start + 2592000000;
+
+        // Pre-populate spent with prior spending
+        sqlx::query(
+            "INSERT INTO envelope_periods (id, envelope_id, period_start, period_end, allocated, spent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("ep6")
+        .bind("env6")
+        .bind(period_start)
+        .bind(period_end)
+        .bind(50000)
+        .bind(12000) // $120.00 already spent
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert envelope_period");
+
+        sqlx::query(
+            "INSERT INTO transactions (id, household_id, txn_date, entry_date, status, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("txn6")
+        .bind("h6")
+        .bind(period_start)
+        .bind(now)
+        .bind("posted")
+        .bind("manual")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert transaction");
+
+        // Credit line = refund to expense account
+        sqlx::query(
+            "INSERT INTO journal_lines (id, transaction_id, account_id, envelope_id, amount, side, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("jl6")
+        .bind("txn6")
+        .bind("acc6")
+        .bind("env6")
+        .bind(5000) // $50.00 refund
+        .bind("credit")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert credit journal line");
+
+        let (spent,): (i64,) = sqlx::query_as("SELECT spent FROM envelope_periods WHERE id = ?")
+            .bind("ep6")
+            .fetch_one(&pool)
+            .await
+            .expect("Should fetch envelope_period");
+
+        assert_eq!(spent, 7000, "credit (refund) should decrease spent: 12000 - 5000 = 7000");
+    }
+
+    #[tokio::test]
     async fn test_envelope_spent_ignores_pending_transactions() {
         use std::time::{SystemTime, UNIX_EPOCH};
 
