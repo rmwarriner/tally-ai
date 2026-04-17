@@ -1,0 +1,101 @@
+mutation CreateConventionalCommitsRuleset($repositoryId: ID!) {
+  createRepositoryRuleset(
+    input: {
+      repositoryId: $repositoryId
+      name: "Enforce Conventional Commits"
+      description: "Require conventional commit format (feat:, fix:, test:, docs:, chore:, refactor:)"
+      enforcement: ACTIVE
+      target: BRANCH
+      bypassActors: []
+      conditions: {
+        refName: {
+          include: ["refs/heads/*"]
+          exclude: []
+        }
+      }
+      rules: [
+        {
+          type: COMMIT_MESSAGE_PATTERN
+          parameters: {
+            operator: STARTS_WITH
+            pattern: "^(feat|fix|test|docs|chore|refactor|perf|style|ci)(\\(.+\\))?!?: .+"
+          }
+        }
+      ]
+    }
+  ) {
+    ruleset {
+      id
+      name
+    }
+  }
+}
+
+mutation CreateProtectCriticalFilesRuleset($repositoryId: ID!) {
+  createRepositoryRuleset(
+    input: {
+      repositoryId: $repositoryId
+      name: "Protect Critical Files"
+      description: "Require PR for changes to CLAUDE.md, DECISIONS.md, SECURITY.md, LICENSE, CODEOWNERS"
+      enforcement: ACTIVE
+      target: BRANCH
+      bypassActors: []
+      conditions: {
+        refName: {
+          include: ["refs/heads/*"]
+          exclude: []
+        }
+      }
+      rules: [
+        {
+          type: FILE_PATH_RESTRICTION
+          parameters: {
+            restrictedFilePaths: ["CLAUDE.md", "DECISIONS.md", "SECURITY.md", "LICENSE", ".github/CODEOWNERS"]
+          }
+        }
+      ]
+    }
+  ) {
+    ruleset {
+      id
+      name
+    }
+  }
+}
+
+mutation CreateLinearHistoryRuleset($repositoryId: ID!) {
+  createRepositoryRuleset(
+    input: {
+      repositoryId: $repositoryId
+      name: "Linear History for main"
+      description: "Enforce linear history on main branch (squash/rebase only)"
+      enforcement: ACTIVE
+      target: BRANCH
+      bypassActors: []
+      conditions: {
+        refName: {
+          include: ["refs/heads/main"]
+          exclude: []
+        }
+      }
+      rules: [
+        {
+          type: REQUIRED_LINEAR_HISTORY
+        }
+        {
+          type: REQUIRED_PULL_REQUEST_REVIEWS
+          parameters: {
+            requiredApprovingReviewCount: 1
+            dismissStaleOnPush: true
+            requireCodeOwnerReview: false
+          }
+        }
+      ]
+    }
+  ) {
+    ruleset {
+      id
+      name
+    }
+  }
+}
