@@ -268,4 +268,629 @@ mod tests {
             "DELETE on audit_log should fail due to trigger"
         );
     }
+
+    #[tokio::test]
+    async fn test_envelope_spent_increases_on_journal_insert() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_envelope_insert.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool)
+            .await
+            .expect("Migrations should run");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Set up: household, account, envelope, envelope_period
+        sqlx::query(
+            "INSERT INTO households (id, name, timezone, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind("h1")
+        .bind("Test Household")
+        .bind("America/Chicago")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert household");
+
+        sqlx::query(
+            "INSERT INTO accounts (id, household_id, name, type, normal_balance, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("acc1")
+        .bind("h1")
+        .bind("Groceries")
+        .bind("expense")
+        .bind("debit")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert account");
+
+        sqlx::query(
+            "INSERT INTO envelopes (id, household_id, account_id, name, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("env1")
+        .bind("h1")
+        .bind("acc1")
+        .bind("Groceries Budget")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert envelope");
+
+        let period_start = now - (now % 86400000); // Midnight UTC
+        let period_end = period_start + 2592000000; // 30 days
+
+        sqlx::query(
+            "INSERT INTO envelope_periods (id, envelope_id, period_start, period_end, allocated, spent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("ep1")
+        .bind("env1")
+        .bind(period_start)
+        .bind(period_end)
+        .bind(50000) // $500.00
+        .bind(0)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert envelope_period");
+
+        // Create a posted transaction
+        sqlx::query(
+            "INSERT INTO transactions (id, household_id, txn_date, entry_date, status, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("txn1")
+        .bind("h1")
+        .bind(period_start)
+        .bind(now)
+        .bind("posted")
+        .bind("manual")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert transaction");
+
+        // Insert journal line with envelope_id
+        sqlx::query(
+            "INSERT INTO journal_lines (id, transaction_id, account_id, envelope_id, amount, side, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("jl1")
+        .bind("txn1")
+        .bind("acc1")
+        .bind("env1")
+        .bind(12000) // $120.00
+        .bind("debit")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert journal line");
+
+        // Verify spent increased
+        let (spent,): (i64,) = sqlx::query_as("SELECT spent FROM envelope_periods WHERE id = ?")
+            .bind("ep1")
+            .fetch_one(&pool)
+            .await
+            .expect("Should fetch envelope_period");
+
+        assert_eq!(spent, 12000, "spent should increase by journal line amount");
+    }
+
+    #[tokio::test]
+    async fn test_envelope_spent_recalculates_on_journal_update() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_envelope_update.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool)
+            .await
+            .expect("Migrations should run");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Set up household, account, envelope, period
+        sqlx::query(
+            "INSERT INTO households (id, name, timezone, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind("h2")
+        .bind("Test Household")
+        .bind("America/Chicago")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert household");
+
+        sqlx::query(
+            "INSERT INTO accounts (id, household_id, name, type, normal_balance, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("acc2")
+        .bind("h2")
+        .bind("Gas")
+        .bind("expense")
+        .bind("debit")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert account");
+
+        sqlx::query(
+            "INSERT INTO envelopes (id, household_id, account_id, name, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("env2")
+        .bind("h2")
+        .bind("acc2")
+        .bind("Gas Budget")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert envelope");
+
+        let period_start = now - (now % 86400000);
+        let period_end = period_start + 2592000000;
+
+        sqlx::query(
+            "INSERT INTO envelope_periods (id, envelope_id, period_start, period_end, allocated, spent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("ep2")
+        .bind("env2")
+        .bind(period_start)
+        .bind(period_end)
+        .bind(10000)
+        .bind(0)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert envelope_period");
+
+        sqlx::query(
+            "INSERT INTO transactions (id, household_id, txn_date, entry_date, status, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("txn2")
+        .bind("h2")
+        .bind(period_start)
+        .bind(now)
+        .bind("posted")
+        .bind("manual")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert transaction");
+
+        sqlx::query(
+            "INSERT INTO journal_lines (id, transaction_id, account_id, envelope_id, amount, side, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("jl2")
+        .bind("txn2")
+        .bind("acc2")
+        .bind("env2")
+        .bind(3000) // $30.00
+        .bind("debit")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert journal line");
+
+        // Update the journal line amount
+        sqlx::query("UPDATE journal_lines SET amount = ? WHERE id = ?")
+            .bind(5000) // $50.00
+            .bind("jl2")
+            .execute(&pool)
+            .await
+            .expect("Should update journal line");
+
+        // Verify spent recalculated: should be 5000 not 3000
+        let (spent,): (i64,) = sqlx::query_as("SELECT spent FROM envelope_periods WHERE id = ?")
+            .bind("ep2")
+            .fetch_one(&pool)
+            .await
+            .expect("Should fetch envelope_period");
+
+        assert_eq!(
+            spent, 5000,
+            "spent should recalculate: subtract old amount, add new amount"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_envelope_spent_decreases_on_journal_delete() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_envelope_delete.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool)
+            .await
+            .expect("Migrations should run");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Set up
+        sqlx::query(
+            "INSERT INTO households (id, name, timezone, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind("h3")
+        .bind("Test Household")
+        .bind("America/Chicago")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert household");
+
+        sqlx::query(
+            "INSERT INTO accounts (id, household_id, name, type, normal_balance, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("acc3")
+        .bind("h3")
+        .bind("Entertainment")
+        .bind("expense")
+        .bind("debit")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert account");
+
+        sqlx::query(
+            "INSERT INTO envelopes (id, household_id, account_id, name, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("env3")
+        .bind("h3")
+        .bind("acc3")
+        .bind("Entertainment Budget")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert envelope");
+
+        let period_start = now - (now % 86400000);
+        let period_end = period_start + 2592000000;
+
+        sqlx::query(
+            "INSERT INTO envelope_periods (id, envelope_id, period_start, period_end, allocated, spent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("ep3")
+        .bind("env3")
+        .bind(period_start)
+        .bind(period_end)
+        .bind(20000)
+        .bind(8000) // Pre-populate spent
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert envelope_period");
+
+        sqlx::query(
+            "INSERT INTO transactions (id, household_id, txn_date, entry_date, status, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("txn3")
+        .bind("h3")
+        .bind(period_start)
+        .bind(now)
+        .bind("posted")
+        .bind("manual")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert transaction");
+
+        sqlx::query(
+            "INSERT INTO journal_lines (id, transaction_id, account_id, envelope_id, amount, side, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("jl3")
+        .bind("txn3")
+        .bind("acc3")
+        .bind("env3")
+        .bind(5000) // $50.00
+        .bind("debit")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert journal line");
+
+        // Verify spent increased
+        let (spent_before,): (i64,) =
+            sqlx::query_as("SELECT spent FROM envelope_periods WHERE id = ?")
+                .bind("ep3")
+                .fetch_one(&pool)
+                .await
+                .expect("Should fetch envelope_period");
+
+        assert_eq!(spent_before, 13000, "spent should be 8000 + 5000");
+
+        // Delete the journal line
+        sqlx::query("DELETE FROM journal_lines WHERE id = ?")
+            .bind("jl3")
+            .execute(&pool)
+            .await
+            .expect("Should delete journal line");
+
+        // Verify spent decreased
+        let (spent_after,): (i64,) =
+            sqlx::query_as("SELECT spent FROM envelope_periods WHERE id = ?")
+                .bind("ep3")
+                .fetch_one(&pool)
+                .await
+                .expect("Should fetch envelope_period");
+
+        assert_eq!(spent_after, 8000, "spent should decrease back to original");
+    }
+
+    #[tokio::test]
+    async fn test_envelope_spent_only_updates_matching_period() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_envelope_period_match.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool)
+            .await
+            .expect("Migrations should run");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Set up
+        sqlx::query(
+            "INSERT INTO households (id, name, timezone, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind("h4")
+        .bind("Test Household")
+        .bind("America/Chicago")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert household");
+
+        sqlx::query(
+            "INSERT INTO accounts (id, household_id, name, type, normal_balance, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("acc4")
+        .bind("h4")
+        .bind("Utilities")
+        .bind("expense")
+        .bind("debit")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert account");
+
+        sqlx::query(
+            "INSERT INTO envelopes (id, household_id, account_id, name, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("env4")
+        .bind("h4")
+        .bind("acc4")
+        .bind("Utilities Budget")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert envelope");
+
+        let period1_start = now - (now % 86400000);
+        let period1_end = period1_start + 2592000000; // 30 days
+        let period2_start = period1_end + 86400000; // Next day after period 1 ends
+        let period2_end = period2_start + 2592000000;
+
+        // Create two envelope periods
+        sqlx::query(
+            "INSERT INTO envelope_periods (id, envelope_id, period_start, period_end, allocated, spent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("ep4a")
+        .bind("env4")
+        .bind(period1_start)
+        .bind(period1_end)
+        .bind(10000)
+        .bind(0)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert first envelope_period");
+
+        sqlx::query(
+            "INSERT INTO envelope_periods (id, envelope_id, period_start, period_end, allocated, spent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("ep4b")
+        .bind("env4")
+        .bind(period2_start)
+        .bind(period2_end)
+        .bind(10000)
+        .bind(0)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert second envelope_period");
+
+        // Transaction well within period 2
+        sqlx::query(
+            "INSERT INTO transactions (id, household_id, txn_date, entry_date, status, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("txn4")
+        .bind("h4")
+        .bind(period2_start + 86400000)
+        .bind(now)
+        .bind("posted")
+        .bind("manual")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert transaction");
+
+        sqlx::query(
+            "INSERT INTO journal_lines (id, transaction_id, account_id, envelope_id, amount, side, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("jl4")
+        .bind("txn4")
+        .bind("acc4")
+        .bind("env4")
+        .bind(3000)
+        .bind("debit")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert journal line");
+
+        // Verify only period2 was updated
+        let (spent1,): (i64,) =
+            sqlx::query_as("SELECT spent FROM envelope_periods WHERE id = ?")
+                .bind("ep4a")
+                .fetch_one(&pool)
+                .await
+                .expect("Should fetch period 1");
+
+        let (spent2,): (i64,) =
+            sqlx::query_as("SELECT spent FROM envelope_periods WHERE id = ?")
+                .bind("ep4b")
+                .fetch_one(&pool)
+                .await
+                .expect("Should fetch period 2");
+
+        assert_eq!(spent1, 0, "period 1 should not be updated");
+        assert_eq!(spent2, 3000, "period 2 should be updated");
+    }
+
+    #[tokio::test]
+    async fn test_envelope_spent_ignores_pending_transactions() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_envelope_pending.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool)
+            .await
+            .expect("Migrations should run");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Set up
+        sqlx::query(
+            "INSERT INTO households (id, name, timezone, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind("h5")
+        .bind("Test Household")
+        .bind("America/Chicago")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert household");
+
+        sqlx::query(
+            "INSERT INTO accounts (id, household_id, name, type, normal_balance, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("acc5")
+        .bind("h5")
+        .bind("Groceries")
+        .bind("expense")
+        .bind("debit")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert account");
+
+        sqlx::query(
+            "INSERT INTO envelopes (id, household_id, account_id, name, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("env5")
+        .bind("h5")
+        .bind("acc5")
+        .bind("Groceries Budget")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert envelope");
+
+        let period_start = now - (now % 86400000);
+        let period_end = period_start + 2592000000;
+
+        sqlx::query(
+            "INSERT INTO envelope_periods (id, envelope_id, period_start, period_end, allocated, spent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("ep5")
+        .bind("env5")
+        .bind(period_start)
+        .bind(period_end)
+        .bind(50000)
+        .bind(0)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert envelope_period");
+
+        // Create PENDING transaction (not posted)
+        sqlx::query(
+            "INSERT INTO transactions (id, household_id, txn_date, entry_date, status, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("txn5")
+        .bind("h5")
+        .bind(period_start)
+        .bind(now)
+        .bind("pending")
+        .bind("manual")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert transaction");
+
+        sqlx::query(
+            "INSERT INTO journal_lines (id, transaction_id, account_id, envelope_id, amount, side, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("jl5")
+        .bind("txn5")
+        .bind("acc5")
+        .bind("env5")
+        .bind(12000)
+        .bind("debit")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert journal line");
+
+        // Verify spent remains 0 (trigger only fires on posted status)
+        let (spent,): (i64,) =
+            sqlx::query_as("SELECT spent FROM envelope_periods WHERE id = ?")
+                .bind("ep5")
+                .fetch_one(&pool)
+                .await
+                .expect("Should fetch envelope_period");
+
+        assert_eq!(spent, 0, "spent should not increase for pending transactions");
+    }
 }

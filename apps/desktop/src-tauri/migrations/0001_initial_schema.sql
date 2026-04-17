@@ -160,5 +160,7 @@ BEGIN
     UPDATE envelope_periods
     SET spent = spent - OLD.amount
     WHERE envelope_id = OLD.envelope_id
+      AND period_start <= (SELECT txn_date FROM transactions WHERE id = OLD.transaction_id)
+      AND period_end >= (SELECT txn_date FROM transactions WHERE id = OLD.transaction_id)
       AND (SELECT status FROM transactions WHERE id = OLD.transaction_id) = 'posted';
 END;
