@@ -40,6 +40,7 @@ pub fn generate_mnemonic() -> Result<String, MnemonicError> {
 ///
 /// # Errors
 /// Returns error if phrase is invalid or contains unknown words
+#[allow(dead_code)]
 pub fn mnemonic_to_entropy(phrase: &str) -> Result<Vec<u8>, MnemonicError> {
     let mnemonic = Mnemonic::parse_in(Language::English, phrase)
         .map_err(|e| MnemonicError::InvalidMnemonic(e.to_string()))?;
@@ -53,6 +54,7 @@ pub fn mnemonic_to_entropy(phrase: &str) -> Result<Vec<u8>, MnemonicError> {
 ///
 /// # Returns
 /// true if the phrase is a valid 12-word BIP-39 mnemonic
+#[allow(dead_code)]
 pub fn validate_mnemonic(phrase: &str) -> bool {
     Mnemonic::parse_in(Language::English, phrase).is_ok()
 }

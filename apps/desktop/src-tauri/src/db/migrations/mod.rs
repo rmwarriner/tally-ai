@@ -32,7 +32,7 @@ mod tests {
             .await
             .expect("Should create database");
 
-        // Verify core tables exist
+        // Verify all Phase 1 tables exist
         let tables: Vec<(String,)> =
             sqlx::query_as("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
                 .fetch_all(&pool)
@@ -41,17 +41,96 @@ mod tests {
 
         let table_names: Vec<&str> = tables.iter().map(|(n,)| n.as_str()).collect();
 
-        assert!(table_names.contains(&"accounts"), "Missing accounts table");
-        assert!(table_names.contains(&"audit_log"), "Missing audit_log table");
-        assert!(table_names.contains(&"envelopes"), "Missing envelopes table");
+        // Core identity tables
         assert!(table_names.contains(&"households"), "Missing households table");
-        assert!(
-            table_names.contains(&"journal_entries"),
-            "Missing journal_entries table"
-        );
+        assert!(table_names.contains(&"users"), "Missing users table");
+
+        // Chart of accounts
+        assert!(table_names.contains(&"accounts"), "Missing accounts table");
+
+        // Transactions and journal lines
+        assert!(table_names.contains(&"transactions"), "Missing transactions table");
         assert!(
             table_names.contains(&"journal_lines"),
             "Missing journal_lines table"
+        );
+
+        // Envelopes
+        assert!(table_names.contains(&"envelopes"), "Missing envelopes table");
+        assert!(
+            table_names.contains(&"envelope_periods"),
+            "Missing envelope_periods table"
+        );
+
+        // Audit log
+        assert!(table_names.contains(&"audit_log"), "Missing audit_log table");
+
+        // Verify no deprecated tables
+        assert!(
+            !table_names.contains(&"journal_entries"),
+            "journal_entries should be transactions"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_households_timezone_required() {
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_timezone.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool)
+            .await
+            .expect("Migrations should run");
+
+        // Verify timezone column is NOT NULL by checking schema
+        let schema: Vec<(String,)> = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='households'",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("Should query table schema");
+
+        let table_def = schema.first().expect("households table should exist");
+        assert!(
+            table_def.0.contains("timezone       TEXT NOT NULL"),
+            "timezone should be NOT NULL"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_money_stored_as_integers() {
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_money.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool)
+            .await
+            .expect("Migrations should run");
+
+        // Verify amount column is INTEGER by checking the schema
+        let schema: Vec<(String,)> = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='journal_lines'",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("Should query table schema");
+
+        let table_def = schema.first().expect("journal_lines table should exist");
+        assert!(
+            table_def.0.contains("amount") && table_def.0.contains("INTEGER"),
+            "amount should be INTEGER, not REAL"
+        );
+        assert!(
+            !table_def.0.contains("REAL"),
+            "schema should not use REAL for monetary amounts"
         );
     }
 

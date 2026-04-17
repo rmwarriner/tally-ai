@@ -29,6 +29,7 @@ pub enum KeyDerivationError {
 /// - Memory cost: 64 MiB
 /// - Time cost: 3 iterations
 /// - Parallelism: 4 threads
+///
 /// These parameters are tuned for desktop security (not mobile).
 pub fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; KEY_SIZE], KeyDerivationError> {
     if salt.len() != SALT_SIZE {
