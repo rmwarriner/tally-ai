@@ -26,7 +26,7 @@ mod tests {
         // Ulid::new() uses random bits within the same millisecond so back-to-back
         // calls are not guaranteed ordered. Verify ordering across distinct timestamps
         // by constructing ULIDs from known millisecond values.
-        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+        use std::time::{Duration, UNIX_EPOCH};
         let t1 = UNIX_EPOCH + Duration::from_millis(1_000_000);
         let t2 = UNIX_EPOCH + Duration::from_millis(2_000_000);
         let id1 = Ulid::from_datetime(t1).to_string();
