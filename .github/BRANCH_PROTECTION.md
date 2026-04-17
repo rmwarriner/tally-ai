@@ -25,19 +25,28 @@ This document describes the recommended branch protection settings for the `main
 - ✅ **Require pull request reviews before merging**
   - Approvals required: **1**
   - Dismiss stale pull request approvals when new commits are pushed
-  - Require code review from Code Owners (optional, if you set up CODEOWNERS)
+  - ✅ Require code review from Code Owners (set up in [CODEOWNERS](.github/CODEOWNERS))
+
+### Auto-Approve Docs
+
+Documentation and config-only PRs are auto-approved by `.github/workflows/auto-approve-docs.yml`. 
+
+This workflow auto-approves (and labels) PRs that **only** change:
+- `*.md` files
+- `.github/**` (workflows, templates, configs)
+- `docs/**`
+- `.npmrc`, `.gitignore`, `.prettierrc*`, `.eslintrc*`, `tsconfig*.json`
+- `package.json`, `pnpm-lock.yaml`, `Cargo.lock`
+- `.husky/**`, `LICENSE`
+
+If a PR touches any code files (`.ts`, `.tsx`, `.rs`), it requires a human review.
 
 ### Enforce Administrators
 
-- ✅ **Enforce all the above rules for administrators too**
-
-### Dismiss Stale Reviews
-
-- ✅ **Dismiss stale pull request approvals when new commits are pushed**
-
-### Require CODEOWNERS Review
-
-- Optional: Set up [CODEOWNERS](.github/CODEOWNERS) and require their review for matching files
+- ⚠️ **Do NOT enforce rules for administrators**
+  - Allows admin to bypass for urgent hotfixes if needed
+  - Still auto-approves docs via workflow
+  - Maintains accountability (commits are logged)
 
 ---
 
