@@ -31,37 +31,9 @@ mutation CreateConventionalCommitsRuleset($repositoryId: ID!) {
   }
 }
 
-mutation CreateProtectCriticalFilesRuleset($repositoryId: ID!) {
-  createRepositoryRuleset(
-    input: {
-      repositoryId: $repositoryId
-      name: "Protect Critical Files"
-      description: "Require PR for changes to CLAUDE.md, DECISIONS.md, SECURITY.md, LICENSE, CODEOWNERS"
-      enforcement: ACTIVE
-      target: BRANCH
-      bypassActors: []
-      conditions: {
-        refName: {
-          include: ["refs/heads/*"]
-          exclude: []
-        }
-      }
-      rules: [
-        {
-          type: FILE_PATH_RESTRICTION
-          parameters: {
-            restrictedFilePaths: ["CLAUDE.md", "DECISIONS.md", "SECURITY.md", "LICENSE", ".github/CODEOWNERS"]
-          }
-        }
-      ]
-    }
-  ) {
-    ruleset {
-      id
-      name
-    }
-  }
-}
+# NOTE: File protection via push rules is not available for public repos.
+# Use CODEOWNERS + branch protection instead (already configured).
+# See: .github/RULESETS.md for details.
 
 mutation CreateLinearHistoryRuleset($repositoryId: ID!) {
   createRepositoryRuleset(

@@ -11,7 +11,52 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  check-docs-only:
+    runs-on: ubuntu-latest
+    outputs:
+      docs-only: ${{ steps.check.outputs.docs-only }}
+    steps:
+      - name: Check if PR only changes docs/config
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const response = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100
+            });
+
+            const files = response.data.map(f => f.filename);
+
+            const docPatterns = [
+              /\.md$/,
+              /^\.github\//,
+              /^docs\//,
+              /^terraform\//,
+              /^scripts\//,
+              /^\.npmrc$/,
+              /^\.gitignore$/,
+              /^LICENSE$/,
+              /^package\.json$/,
+              /^pnpm-lock\.yaml$/,
+              /^Cargo\.lock$/,
+              /^\.husky\//,
+              /^\.prettierrc/,
+              /^\.eslintrc/,
+              /^tsconfig/,
+            ];
+
+            const docsOnly = files && files.every(file =>
+              docPatterns.some(pattern => pattern.test(file))
+            );
+
+            core.setOutput('docs-only', docsOnly);
+
   test:
+    needs: check-docs-only
+    if: needs.check-docs-only.outputs.docs-only != 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -51,6 +96,8 @@ jobs:
         run: pnpm test
 
   typecheck:
+    needs: check-docs-only
+    if: needs.check-docs-only.outputs.docs-only != 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -90,6 +137,8 @@ jobs:
         run: pnpm typecheck
 
   rust-test:
+    needs: check-docs-only
+    if: needs.check-docs-only.outputs.docs-only != 'true'
     runs-on: ubuntu-latest
 
     steps:
