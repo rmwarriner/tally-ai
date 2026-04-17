@@ -1,0 +1,37 @@
+title: "Idea: "
+labels: ["idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # Share an Idea
+
+        Propose a feature, improvement, or change to Tally.ai.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What's your idea?
+      description: Describe what you'd like to see or change.
+      placeholder: "For example: Add multi-currency support, or Show spending trends..."
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Why does this matter?
+      description: What problem does it solve? Who benefits?
+      placeholder: "I often track expenses in multiple currencies..."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative approaches
+      description: Any other ways to solve this?
+      placeholder: "You could also..."
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        **Interested in working on this?** Once the idea is discussed and refined, it can become an issue in the backlog.

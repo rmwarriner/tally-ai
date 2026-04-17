@@ -73,16 +73,77 @@ cargo test --all
 # Coverage target: 80%+
 ```
 
+## Issue & Discussion Workflow
+
+Tally.ai uses GitHub Issues and Discussions as the single source of truth—no local markdown backlogs.
+
+### Discussions (Ideas & Questions)
+
+**For new ideas:**
+1. Start a [Discussion](../../discussions/new?category=Ideas) (not an issue)
+2. Community discusses the idea
+3. If approved, maintainer converts to an Issue
+
+**For questions:**
+1. Start a [Discussion](../../discussions/new?category=Q-and-A) instead of an issue
+2. Get help from the community
+3. Discussions are searchable and help future users
+
+### Issues (Bugs, Features, Work)
+
+**Filing an issue:**
+1. Check existing issues first (avoid duplicates)
+2. Use the appropriate template:
+   - [Bug Report](.github/ISSUE_TEMPLATE/bug_report.md) for bugs
+   - [Feature Request](.github/ISSUE_TEMPLATE/feature_request.md) for enhancements
+3. Be specific and include context
+4. Labels will be auto-added (frontend/backend, phase, etc.)
+
+**Issue lifecycle:**
+
+1. **Triage** — Maintainer reviews and prioritizes
+   - Label: `triage` → `bug`/`enhancement` (type)
+   - Label: `phase-1`/`phase-2` (scope)
+   - Label: `frontend`/`backend`/`ai`/`database` (domain)
+   - Priority: Critical, High, Medium, Low
+   - Effort estimate: 1pt, 2pt, 3pt, 5pt, 8pt
+
+2. **Backlog** — Waiting for someone to work on it
+   - Status: In **GitHub Project Board**
+   - Linked to release milestone (if applicable)
+
+3. **Ready** — Issue is refined and ready for work
+   - Label: `help-wanted` or `good-first-issue` (if open to contributors)
+   - Someone claimed it or it's waiting for assignment
+
+4. **In Progress** — Someone is actively working
+   - Issue assigned
+   - Branch created: `feature/issue-123-description`
+   - Label: `in-progress`
+
+5. **Review** — PR is open and under review
+   - PR linked to issue: Type `Fixes #123` in PR body
+   - Code review in progress
+
+6. **Done** — PR merged, issue closed
+   - Issue closed automatically when PR merges
+   - Shipped in next release
+
+### GitHub Project Board
+
+See [PROJECT_BOARD.md](.github/PROJECT_BOARD.md) for setup and usage. The board is the visual representation of the backlog and current work.
+
 ## Pull Request Process
 
-1. **Branch off `main`** with a descriptive name
-2. **Test locally** — Ensure tests pass and types are clean
-3. **Write a clear PR description**
+1. **Link to issue** — In PR body, type `Fixes #123`
+2. **Branch naming** — Use `feature/issue-123-description` or `fix/issue-456-description`
+3. **Test locally** — Ensure tests pass and types are clean
+4. **Write a clear PR description**
    - What does it do?
    - Why is it needed?
    - Any tradeoffs or decisions?
-4. **Address feedback** — We may ask for changes
-5. **One approval** — At least one maintainer must review before merge
+5. **Address feedback** — We may ask for changes
+6. **One approval** — At least one maintainer must review before merge
 
 See [PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md) for the checklist.
 

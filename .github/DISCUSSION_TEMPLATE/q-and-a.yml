@@ -1,0 +1,37 @@
+title: "Q&A: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # Ask a Question
+
+        Have a question about Tally.ai, development, or usage? Ask here.
+  - type: textarea
+    id: question
+    attributes:
+      label: What's your question?
+      description: Ask away. The more specific, the better we can help.
+      placeholder: "How do I...? What's the best way to...?"
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Any additional details that help answer your question?
+      placeholder: "I'm trying to... and I got stuck when..."
+    validations:
+      required: false
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Development / Setup
+        - Architecture / Design
+        - Usage / How-to
+        - Debugging
+        - Other
+    validations:
+      required: true

@@ -1,0 +1,84 @@
+name: Auto-label Issues & PRs
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  label-by-files:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request
+    steps:
+      - name: Label by changed files
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const response = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+
+            const files = response.data.map(f => f.filename);
+            const labels = new Set();
+
+            // Domain labels based on file paths
+            if (files.some(f => f.startsWith('apps/desktop/src/') || f.startsWith('packages/core-types/'))) {
+              labels.add('frontend');
+            }
+            if (files.some(f => f.startsWith('apps/desktop/src-tauri/'))) {
+              labels.add('backend');
+            }
+            if (files.some(f => f.includes('crypto') || f.includes('encryption'))) {
+              labels.add('crypto');
+            }
+            if (files.some(f => f.includes('db/') || f.includes('migrations') || f.includes('sql'))) {
+              labels.add('database');
+            }
+            if (files.some(f => f.includes('ai/') || f.includes('claude') || f.includes('prompt'))) {
+              labels.add('ai');
+            }
+            if (files.some(f => f.startsWith('.github/') || f.includes('workflow') || f.includes('github'))) {
+              labels.add('ci');
+            }
+            if (files.some(f => f.endsWith('.test.ts') || f.endsWith('.test.tsx') || f.endsWith('.spec.rs'))) {
+              labels.add('test');
+            }
+            if (files.some(f => f.endsWith('.md') || f === 'README.md' || f.includes('docs/'))) {
+              labels.add('documentation');
+            }
+
+            // Always add phase-1 for now
+            labels.add('phase-1');
+
+            if (labels.size > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: Array.from(labels)
+              });
+              core.info(`Added labels: ${Array.from(labels).join(', ')}`);
+            }
+
+  triage-new-issues:
+    runs-on: ubuntu-latest
+    if: github.event.issues
+    steps:
+      - name: Add triage label to new issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['triage', 'phase-1']
+            });
+            core.info('Added triage and phase-1 labels');

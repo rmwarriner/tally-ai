@@ -117,6 +117,28 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidance on PRs, commit style, and co
 
 Found a security issue? Please see [SECURITY.md](SECURITY.md) for responsible disclosure.
 
+## Getting Involved
+
+### Report a Bug
+
+Found an issue? [Open a bug report](../../issues/new?template=bug_report.md).
+
+### Suggest a Feature
+
+Have an idea? [Start a discussion](../../discussions/new?category=Ideas) or [request a feature](../../issues/new?template=feature_request.md).
+
+### Ask a Question
+
+Need help? [Ask in Discussions](../../discussions/new?category=Q-and-A) — it helps future users too.
+
+### Track Our Work
+
+See what we're working on in the [GitHub Project Board](../../projects) (backlog, in-progress, review, done).
+
+### Contribute Code
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions, testing, and how to submit PRs.
+
 ## License
 
 MIT — see [LICENSE](LICENSE)
