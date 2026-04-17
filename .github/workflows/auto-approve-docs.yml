@@ -33,6 +33,8 @@ jobs:
               /\.md$/,                    // *.md
               /^\.github\//,              // .github/**
               /^docs\//,                  // docs/**
+              /^terraform\//,             // terraform/** (IaC config)
+              /^scripts\//,               // scripts/** (helper scripts)
               /^\.npmrc$/,                // .npmrc
               /^\.gitignore$/,            // .gitignore
               /^LICENSE$/,                // LICENSE
