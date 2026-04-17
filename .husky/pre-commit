@@ -10,4 +10,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 echo "→ Running TypeScript tests with coverage..."
 pnpm --filter @tally/desktop exec vitest run --coverage
 
+echo "→ Running core-types tests..."
+pnpm --filter @tally/core-types test
+
 echo "✓ All checks passed"
