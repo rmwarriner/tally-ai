@@ -18,24 +18,7 @@ Rulesets enforce code quality patterns at the git level. Unlike branch protectio
 
 ---
 
-### 2. Protect Critical Files
-
-**What:** CLAUDE.md, DECISIONS.md, SECURITY.md, LICENSE can only be changed via PR (no direct pushes)
-
-**Files:**
-- `CLAUDE.md` (architectural rules)
-- `DECISIONS.md` (decision log)
-- `SECURITY.md` (security policy)
-- `LICENSE` (license file)
-- `.github/CODEOWNERS` (code owners)
-
-**Enforcement:** Require PR review before merging
-
-**Why:** These files define project fundamentals; changes should be intentional and reviewed
-
----
-
-### 3. Require Linear History
+### 2. Require Linear History
 
 **What:** Only allow squash or rebase merges; no merge commits
 
@@ -45,25 +28,33 @@ Rulesets enforce code quality patterns at the git level. Unlike branch protectio
 
 ---
 
+## Protecting Critical Files (CODEOWNERS Alternative)
+
+**Note:** GitHub push rules (file restrictions) are **not available for public repos**—only org-owned repos.
+
+Instead, use **CODEOWNERS + Branch Protection**:
+
+- [.github/CODEOWNERS](./CODEOWNERS) already lists critical files
+- Enable "Require code owner review" in branch protection
+- Changes to CLAUDE.md, DECISIONS.md, SECURITY.md, LICENSE, CODEOWNERS require your approval
+
+This approach:
+- ✅ Works on public repos
+- ✅ Requires PR (branch protection)
+- ✅ Requires your review (CODEOWNERS)
+- ✅ Files can't be merged without your sign-off
+
+See [Branch Protection Setup](.github/BRANCH_PROTECTION_SETUP.md) — it's already configured.
+
+---
+
 ## Setup Options
 
 ### Option A: Web UI (Easiest)
 
 1. Go to **Settings** → **Rules** → **Rulesets**
 2. Click **New ruleset** → **New branch ruleset**
-3. For each ruleset below, create one
-
-### Option B: GraphQL API
-
-Use the GraphQL mutations in `RULESETS_API.md` to create all three at once.
-
-```bash
-gh api graphql -f query=@rulesets.graphql
-```
-
-### Option C: Terraform
-
-See `terraform/rulesets.tf` for infrastructure-as-code setup.
+3. Create the two rulesets below (skip file protection—not available for public repos)
 
 ---
 
@@ -173,20 +164,7 @@ git push origin docs/update-claude
    - Check: **Enforce for everyone**
 7. Click **Create**
 
-### Ruleset 2: Protect Critical Files
-
-1. **New ruleset** → **New branch ruleset**
-2. **Name:** `Protect Critical Files`
-3. **Enforcement level:** **Active**
-4. **Target branches:** All branches
-5. **Add rules:**
-   - **Restrict file changes**
-   - Files: `CLAUDE.md`, `DECISIONS.md`, `SECURITY.md`, `LICENSE`, `.github/CODEOWNERS`
-   - Restriction: **Pull request required**
-   - Check: **Enforce for everyone**
-6. Click **Create**
-
-### Ruleset 3: Linear History
+### Ruleset 2: Linear History
 
 1. **New ruleset** → **New branch ruleset**
 2. **Name:** `Linear History for main`
@@ -221,22 +199,6 @@ git commit -m "fix: correct decimal rounding"
 git push origin main  # ✅ Allowed
 ```
 
-### Test file protection:
-
-```bash
-# This should be rejected:
-echo "new rule" >> CLAUDE.md
-git commit -m "fix: update rules"
-git push origin main  # ❌ Rejected (must use PR)
-
-# This should work:
-git checkout -b docs/update
-echo "new rule" >> CLAUDE.md
-git commit -m "docs: update rules"
-git push origin docs/update
-# Create PR, merge
-```
-
 ### Test linear history:
 
 ```bash
@@ -245,6 +207,16 @@ git log --oneline main
 # Should see: —————→ (straight line)
 # NOT:        \ / (merge commit)
 ```
+
+### Verify file protection (CODEOWNERS):
+
+File protection uses CODEOWNERS + branch protection:
+- Try editing `CLAUDE.md` directly on GitHub
+- You must create a PR
+- PR requires your approval (CODEOWNERS review)
+- This works because branch protection requires "Require CODEOWNERS review"
+
+See: `.github/BRANCH_PROTECTION_SETUP.md`
 
 ---
 
@@ -256,9 +228,11 @@ git log --oneline main
 | Status checks | ✅ Yes | ✅ Yes | Both checked |
 | Linear history | ❌ No | ✅ Yes | Only ruleset enforces |
 | Commit messages | ❌ No | ✅ Yes | Only ruleset enforces |
-| File protection | ❌ No | ✅ Yes | Only ruleset enforces |
+| File protection | ✅ CODEOWNERS | ❌ Not public repos | Branch protection enforces via CODEOWNERS |
 
 **No conflicts.** Rulesets add new enforcement; branch protection still handles PR reviews.
+
+**Note on file protection:** Push rules aren't available for public repos. Use CODEOWNERS + branch protection instead (already configured).
 
 ---
 
@@ -271,18 +245,6 @@ Your commit message doesn't follow conventional commits. Fix it:
 ```bash
 git commit --amend -m "feat: your message here"
 git push --force-with-lease origin your-branch
-```
-
-### "Can't push to main: file changes require PR"
-
-You're trying to edit a protected file directly. Use a PR instead:
-
-```bash
-git checkout -b fix/update-claude
-# Edit CLAUDE.md
-git commit -m "docs: clarify encryption rules"
-git push origin fix/update-claude
-# Create PR on GitHub
 ```
 
 ### "Commit rejected: only squash/rebase allowed"
@@ -321,17 +283,17 @@ Each ruleset can have a bypass list:
 
 ## Next Steps
 
-1. ✅ Create ruleset 1: Conventional commits (no bypass needed)
-2. ✅ Create ruleset 2: File protection (admin bypass for emergencies)
-3. ✅ Create ruleset 3: Linear history (admin bypass)
+1. ✅ Create ruleset 1: Conventional commits
+2. ✅ Create ruleset 2: Linear history
+3. ✅ Verify branch protection has "Require CODEOWNERS review" enabled
 4. Test each ruleset
 5. Document in team wiki/handbook
 
 Then your repo enforces:
-- ✅ Clean commit messages
-- ✅ Protected architectural docs
-- ✅ Linear, readable history
-- ✅ Code reviews (via branch protection)
-- ✅ Status checks (via branch protection)
+- ✅ Clean commit messages (ruleset)
+- ✅ Protected architectural docs (CODEOWNERS + branch protection)
+- ✅ Linear, readable history (ruleset)
+- ✅ Code reviews (branch protection)
+- ✅ Status checks (branch protection)
 
 **All committed to code quality. ✨**

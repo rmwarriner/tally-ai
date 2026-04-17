@@ -11,9 +11,16 @@ cat << 'EOF'
 ╔════════════════════════════════════════════════════════════════╗
 ║          GitHub Rulesets Setup for tally-ai                   ║
 ║                                                                ║
+║  Creating 2 rulesets for public repos:                        ║
+║  1. Conventional Commits (required format)                    ║
+║  2. Linear History (clean git log)                            ║
+║                                                                ║
+║  Note: File protection uses CODEOWNERS + branch protection   ║
+║        (push rules unavailable for public repos)              ║
+║                                                                ║
+║  Setup options:                                               ║
 ║  1. Web UI (easiest, manual)                                   ║
-║  2. GraphQL API (programmatic)                                 ║
-║  3. Terraform (infrastructure-as-code)                         ║
+║  2. Terraform (infrastructure-as-code)                         ║
 ╚════════════════════════════════════════════════════════════════╝
 
 Choose your method:
@@ -21,11 +28,10 @@ EOF
 
 echo ""
 echo "1) Web UI Setup"
-echo "2) GraphQL API"
-echo "3) Terraform"
+echo "2) Terraform"
 echo "0) Exit"
 echo ""
-read -p "Choose (0-3): " choice
+read -p "Choose (0-2): " choice
 
 case $choice in
   1)
@@ -35,7 +41,7 @@ case $choice in
 
 Go to: https://github.com/rmwarriner/tally-ai/settings/rules/rulesets
 
-Create three rulesets:
+Create two rulesets:
 
 1️⃣ CONVENTIONAL COMMITS
    Name: Enforce Conventional Commits
@@ -45,15 +51,7 @@ Create three rulesets:
    Enforcement: Active
    Bypass: None
 
-2️⃣ PROTECT CRITICAL FILES
-   Name: Protect Critical Files
-   Target: All branches
-   Rule: File path restriction
-   Files: CLAUDE.md, DECISIONS.md, SECURITY.md, LICENSE, .github/CODEOWNERS
-   Enforcement: Active
-   Bypass: None
-
-3️⃣ LINEAR HISTORY
+2️⃣ LINEAR HISTORY
    Name: Linear History for main
    Target: main branch only
    Rules:
@@ -63,38 +61,16 @@ Create three rulesets:
    Enforcement: Active
    Bypass: None
 
+📌 File Protection:
+   Use CODEOWNERS + branch protection instead (already configured)
+   See: .github/BRANCH_PROTECTION_SETUP.md
+
 Full details: .github/RULESETS.md
 
 WEBUI
     ;;
 
   2)
-    cat << 'GRAPHQL'
-
-🔗 GRAPHQL API SETUP
-
-Requires: GitHub CLI (gh auth login)
-
-The GraphQL mutations are in: .github/rulesets.graphql
-
-However, creating rulesets via GraphQL requires:
-1. Repository ID (not the name)
-2. Complex mutation syntax
-
-Easier option:
-  • Use Terraform (option 3) for IaC
-  • Or use Web UI (option 1) for simplicity
-
-To get repository ID:
-  gh api repos/rmwarriner/tally-ai --jq '.id'
-
-Then modify rulesets.graphql with the ID and run:
-  gh api graphql --input .github/rulesets.graphql
-
-GRAPHQL
-    ;;
-
-  3)
     cat << 'TERRAFORM'
 
 🏗️ TERRAFORM SETUP
@@ -148,4 +124,5 @@ esac
 
 echo ""
 echo "📖 Full Documentation: .github/RULESETS.md"
+echo "🔒 File Protection: .github/BRANCH_PROTECTION_SETUP.md (CODEOWNERS)"
 echo "✅ Don't forget to test your rulesets after creation!"

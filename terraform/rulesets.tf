@@ -55,38 +55,11 @@ resource "github_repository_ruleset" "conventional_commits" {
   bypass_actors = []
 }
 
-# Ruleset 2: Protect Critical Files
-resource "github_repository_ruleset" "protect_critical_files" {
-  repository = data.github_repository.main.name
-  name       = "Protect Critical Files"
-  target     = "branch"
-  enforcement = "active"
+# Note: File protection via push rules is not available for public repos.
+# Use CODEOWNERS + branch protection instead (already configured).
+# See: .github/RULESETS.md for details.
 
-  conditions {
-    ref_name {
-      include = ["refs/heads/*"]
-      exclude = []
-    }
-  }
-
-  rules {
-    # Files that require PR for changes
-    file_path_restriction {
-      restricted_file_paths = [
-        "CLAUDE.md",
-        "DECISIONS.md",
-        "SECURITY.md",
-        "LICENSE",
-        ".github/CODEOWNERS"
-      ]
-    }
-  }
-
-  # Enforce for everyone (no bypasses)
-  bypass_actors = []
-}
-
-# Ruleset 3: Linear History for main
+# Ruleset 2: Linear History for main
 resource "github_repository_ruleset" "linear_history" {
   repository = data.github_repository.main.name
   name       = "Linear History for main"
@@ -141,10 +114,6 @@ resource "github_repository_ruleset" "linear_history" {
 # Outputs
 output "conventional_commits_ruleset_id" {
   value = github_repository_ruleset.conventional_commits.id
-}
-
-output "protect_critical_files_ruleset_id" {
-  value = github_repository_ruleset.protect_critical_files.id
 }
 
 output "linear_history_ruleset_id" {
