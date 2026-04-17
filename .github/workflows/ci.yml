@@ -158,9 +158,16 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "apps/desktop/src-tauri"
+          cache-on-failure: true
 
       - name: Run tests
         run: cargo test --all
+        env:
+          CARGO_INCREMENTAL: 1
 
       - name: Run clippy
         run: cargo clippy --all --all-targets -- -D warnings
+        env:
+          CARGO_INCREMENTAL: 1
