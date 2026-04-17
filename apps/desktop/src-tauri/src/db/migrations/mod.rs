@@ -149,4 +149,123 @@ mod tests {
             .await
             .expect("Re-running migrations should succeed");
     }
+
+    #[tokio::test]
+    async fn test_audit_log_immutable_prevents_update() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_audit_immutable.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool)
+            .await
+            .expect("Migrations should run");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Insert a household and audit log entry
+        sqlx::query(
+            "INSERT INTO households (id, name, timezone, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind("household_id")
+        .bind("Test Household")
+        .bind("America/Chicago")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert household");
+
+        sqlx::query(
+            "INSERT INTO audit_log (id, household_id, table_name, row_id, action, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("audit_1")
+        .bind("household_id")
+        .bind("households")
+        .bind("household_id")
+        .bind("insert")
+        .bind("{\"name\":\"Test\"}")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert audit log entry");
+
+        // Attempt UPDATE should fail
+        let update_result = sqlx::query("UPDATE audit_log SET payload = ? WHERE id = ?")
+            .bind("{\"name\":\"Updated\"}")
+            .bind("audit_1")
+            .execute(&pool)
+            .await;
+
+        assert!(
+            update_result.is_err(),
+            "UPDATE on audit_log should fail due to trigger"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_audit_log_immutable_prevents_delete() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_audit_delete.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool)
+            .await
+            .expect("Migrations should run");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Insert a household and audit log entry
+        sqlx::query(
+            "INSERT INTO households (id, name, timezone, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind("household_id")
+        .bind("Test Household")
+        .bind("America/Chicago")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert household");
+
+        sqlx::query(
+            "INSERT INTO audit_log (id, household_id, table_name, row_id, action, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("audit_1")
+        .bind("household_id")
+        .bind("households")
+        .bind("household_id")
+        .bind("insert")
+        .bind("{\"name\":\"Test\"}")
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("Should insert audit log entry");
+
+        // Attempt DELETE should fail
+        let delete_result = sqlx::query("DELETE FROM audit_log WHERE id = ?")
+            .bind("audit_1")
+            .execute(&pool)
+            .await;
+
+        assert!(
+            delete_result.is_err(),
+            "DELETE on audit_log should fail due to trigger"
+        );
+    }
 }
