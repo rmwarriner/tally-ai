@@ -147,7 +147,11 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libglib2.0-dev libgirepository1.0-dev
+          sudo apt-get install -y \
+            libglib2.0-dev \
+            libgirepository1.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
