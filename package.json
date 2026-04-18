@@ -13,9 +13,6 @@
     "node": ">=22",
     "pnpm": ">=10"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "@tauri-apps/cli"]
-  },
   "devDependencies": {
     "husky": "^9.1.7"
   }
