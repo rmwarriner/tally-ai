@@ -3,14 +3,13 @@ name: Auto-Approve & Auto-Merge
 on:
   pull_request:
     types: [opened, reopened, synchronize]
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
 
 jobs:
   auto-approve-and-merge:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.draft == false && github.repository_owner == github.actor
+    if: |
+      github.event.pull_request.draft == false &&
+      (github.actor == github.repository_owner || github.actor == 'dependabot[bot]')
 
     permissions:
       pull-requests: write
@@ -20,49 +19,17 @@ jobs:
       - name: Enable auto-merge
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const pr = context.payload.pull_request || await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            }).then(res => res.data);
-
-            if (!pr) {
-              console.log('No PR found');
-              return;
-            }
-
-            // Check if all required checks have passed
-            const checkRuns = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: pr.head.sha
-            });
-
-            const requiredChecks = ['test', 'typecheck', 'rust-test'];
-            const passedChecks = checkRuns.data.check_runs
-              .filter(check => requiredChecks.includes(check.name))
-              .filter(check => check.conclusion === 'success');
-
-            if (passedChecks.length !== requiredChecks.length) {
-              console.log(`Only ${passedChecks.length}/${requiredChecks.length} checks passed, waiting...`);
-              return;
-            }
-
-            // Enable auto-merge
-            try {
-              await github.rest.pulls.enableAutoMerge({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pr.number,
-                merge_method: 'squash'
-              });
-
-              console.log('Auto-merge enabled');
-            } catch (error) {
-              if (error.message.includes('Auto merge is not enabled')) {
-                console.log('Auto merge not enabled on this branch');
-              } else {
-                throw error;
+            const nodeId = context.payload.pull_request.node_id;
+            await github.graphql(`
+              mutation($pullRequestId: ID!) {
+                enablePullRequestAutoMerge(input: {
+                  pullRequestId: $pullRequestId,
+                  mergeMethod: SQUASH
+                }) {
+                  pullRequest { number }
+                }
               }
-            }
+            `, { pullRequestId: nodeId });
+            console.log('Auto-merge enabled for PR #' + context.payload.pull_request.number);
