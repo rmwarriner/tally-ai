@@ -1,0 +1,39 @@
+name: Open PR via Bot
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Open PR if none exists
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          existing=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            echo "PR #$existing already exists, skipping"
+            exit 0
+          fi
+
+          title=$(git log -1 --pretty=%s)
+          gh pr create \
+            --title "$title" \
+            --body "" \
+            --base main \
+            --head "$BRANCH"

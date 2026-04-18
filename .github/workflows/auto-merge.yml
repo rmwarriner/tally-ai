@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event.pull_request.draft == false &&
-      (github.actor == github.repository_owner || github.actor == 'dependabot[bot]')
+      (github.actor == github.repository_owner || github.actor == 'dependabot[bot]' || github.actor == 'rmwarriner[bot]')
 
     permissions:
       pull-requests: write
