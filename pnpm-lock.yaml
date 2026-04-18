@@ -30,8 +30,8 @@ importers:
         specifier: ^19
         version: 19.2.5(react@19.2.5)
       ulid:
-        specifier: ^2
-        version: 2.4.0
+        specifier: ^3.0.2
+        version: 3.0.2
       zustand:
         specifier: ^5
         version: 5.0.12(@types/react@19.2.14)(react@19.2.5)
@@ -1103,8 +1103,8 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  ulid@2.4.0:
-    resolution: {integrity: sha512-fIRiVTJNcSRmXKPZtGzFQv9WRrZ3M9eoptl/teFJvjOzmpU+/K/JH6HZ8deBfb5vMEpicJcLn7JmvdknlMq7Zg==}
+  ulid@3.0.2:
+    resolution: {integrity: sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w==}
     hasBin: true
 
   undici@7.25.0:
@@ -2133,7 +2133,7 @@ snapshots:
 
   typescript@6.0.3: {}
 
-  ulid@2.4.0: {}
+  ulid@3.0.2: {}
 
   undici@7.25.0: {}
 
