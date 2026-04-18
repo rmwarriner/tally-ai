@@ -30,7 +30,7 @@ importers:
         specifier: ^19
         version: 19.2.5(react@19.2.5)
       ulid:
-        specifier: ^3
+        specifier: ^3.0.2
         version: 3.0.2
       zustand:
         specifier: ^5
