@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
@@ -30,7 +32,10 @@ pub struct HardError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SoftWarningCode {
-    EnvelopeBudgetExceeded,
+    FutureDate,
+    LargeAmount,
+    EnvelopeOverdraft,
+    StaleDate,
     PossibleDuplicate,
 }
 
@@ -207,15 +212,174 @@ pub async fn validate_proposal(
     // DB checks: ERR_INVALID_ACCOUNT, ERR_PLACEHOLDER_ACCOUNT, ERR_ABNORMAL_BALANCE
     validate_accounts(pool, proposal, &mut errors).await;
 
-    if errors.is_empty() {
-        ValidationResult::Accepted
-    } else {
+    if !errors.is_empty() {
         let mut iter = errors.into_iter();
         let first = iter.next().unwrap(); // safe: non-empty
-        ValidationResult::Rejected {
+        return ValidationResult::Rejected {
             errors: NonEmpty::new(first, iter.collect()),
             warnings: vec![],
+        };
+    }
+
+    // Tier 2: soft warnings — only evaluated when there are no hard errors.
+    let warnings = check_soft_warnings(pool, proposal).await;
+    match NonEmpty::from_vec(warnings) {
+        Some(warnings) => ValidationResult::Warnings {
+            warnings,
+            advisories: vec![],
+        },
+        None => ValidationResult::Accepted,
+    }
+}
+
+// -- Tier 2 soft warning checks --
+
+const ONE_DAY_MS: i64 = 86_400_000;
+const NINETY_DAYS_MS: i64 = 90 * 86_400_000;
+const LARGE_AMOUNT_CENTS: i64 = 50_000; // $500 default threshold
+
+async fn check_soft_warnings(
+    pool: &SqlitePool,
+    proposal: &TransactionProposal,
+) -> Vec<SoftWarning> {
+    let mut warnings = Vec::new();
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+
+    if proposal.txn_date_ms > now_ms + ONE_DAY_MS {
+        warnings.push(soft_warning(
+            SoftWarningCode::FutureDate,
+            "This transaction is dated more than a day in the future.",
+            edit_action("Fix date"),
+            vec![RecoveryAction {
+                kind: RecoveryKind::PostAnyway,
+                label: "Post anyway".to_string(),
+                is_primary: false,
+            }],
+        ));
+    }
+
+    if proposal.txn_date_ms < now_ms - NINETY_DAYS_MS {
+        warnings.push(soft_warning(
+            SoftWarningCode::StaleDate,
+            "This transaction is dated more than 90 days in the past.",
+            edit_action("Fix date"),
+            vec![RecoveryAction {
+                kind: RecoveryKind::PostAnyway,
+                label: "Post anyway".to_string(),
+                is_primary: false,
+            }],
+        ));
+    }
+
+    if proposal.lines.iter().any(|l| l.amount_cents > LARGE_AMOUNT_CENTS) {
+        warnings.push(soft_warning(
+            SoftWarningCode::LargeAmount,
+            "One or more amounts are unusually large. Please double-check before posting.",
+            edit_action("Fix amount"),
+            vec![RecoveryAction {
+                kind: RecoveryKind::PostAnyway,
+                label: "Post anyway".to_string(),
+                is_primary: false,
+            }],
+        ));
+    }
+
+    check_envelope_overdraft(pool, proposal, &mut warnings).await;
+    check_possible_duplicate(pool, proposal, &mut warnings).await;
+
+    warnings
+}
+
+async fn check_envelope_overdraft(
+    pool: &SqlitePool,
+    proposal: &TransactionProposal,
+    warnings: &mut Vec<SoftWarning>,
+) {
+    for line in &proposal.lines {
+        let Some(envelope_id) = &line.envelope_id else {
+            continue;
+        };
+
+        let row: Option<(i64, i64)> = sqlx::query_as(
+            "SELECT allocated, spent FROM envelope_periods
+             WHERE envelope_id = ?
+             AND period_start <= ? AND period_end >= ?",
+        )
+        .bind(envelope_id)
+        .bind(proposal.txn_date_ms)
+        .bind(proposal.txn_date_ms)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
+
+        if let Some((allocated, spent)) = row {
+            if spent + line.amount_cents > allocated {
+                warnings.push(soft_warning(
+                    SoftWarningCode::EnvelopeOverdraft,
+                    "This would put the envelope over its allocated amount for this period.",
+                    RecoveryAction {
+                        kind: RecoveryKind::PostAnyway,
+                        label: "Post anyway".to_string(),
+                        is_primary: true,
+                    },
+                    vec![edit_action("Change envelope")],
+                ));
+                return; // one overdraft warning per proposal is enough
+            }
         }
+    }
+}
+
+async fn check_possible_duplicate(
+    pool: &SqlitePool,
+    proposal: &TransactionProposal,
+    warnings: &mut Vec<SoftWarning>,
+) {
+    let debit_total: i64 = proposal
+        .lines
+        .iter()
+        .filter(|l| matches!(l.side, Side::Debit))
+        .map(|l| l.amount_cents)
+        .sum();
+
+    if debit_total == 0 {
+        return;
+    }
+
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM (
+             SELECT t.id
+             FROM transactions t
+             JOIN journal_lines jl ON jl.transaction_id = t.id
+             WHERE t.status = 'posted'
+             AND ABS(t.txn_date - ?) <= ?
+             AND jl.side = 'debit'
+             GROUP BY t.id
+             HAVING SUM(jl.amount) = ?
+         )",
+    )
+    .bind(proposal.txn_date_ms)
+    .bind(ONE_DAY_MS)
+    .bind(debit_total)
+    .fetch_one(pool)
+    .await
+    .unwrap_or((0,));
+
+    if count > 0 {
+        warnings.push(soft_warning(
+            SoftWarningCode::PossibleDuplicate,
+            "A transaction with the same amount exists within one day. This may be a duplicate.",
+            RecoveryAction {
+                kind: RecoveryKind::PostAnyway,
+                label: "Post anyway".to_string(),
+                is_primary: true,
+            },
+            vec![discard_action()],
+        ));
     }
 }
 
@@ -337,6 +501,8 @@ async fn check_abnormal_balance(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use crate::core::proposal::ProposedLine;
     use crate::db::{connection::create_encrypted_db, migrations::run_migrations};
     use tempfile::tempdir;
@@ -400,7 +566,7 @@ mod tests {
     #[test]
     fn validation_result_warnings_roundtrips_json() {
         let warning = soft_warning(
-            SoftWarningCode::EnvelopeBudgetExceeded,
+            SoftWarningCode::EnvelopeOverdraft,
             "This would put your grocery budget over the limit.",
             post_anyway(),
             vec![discard()],
@@ -443,6 +609,30 @@ mod tests {
     }
 
     #[test]
+    fn soft_warning_new_codes_serialize_screaming_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&SoftWarningCode::FutureDate).unwrap(),
+            "\"FUTURE_DATE\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SoftWarningCode::LargeAmount).unwrap(),
+            "\"LARGE_AMOUNT\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SoftWarningCode::EnvelopeOverdraft).unwrap(),
+            "\"ENVELOPE_OVERDRAFT\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SoftWarningCode::StaleDate).unwrap(),
+            "\"STALE_DATE\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SoftWarningCode::PossibleDuplicate).unwrap(),
+            "\"POSSIBLE_DUPLICATE\""
+        );
+    }
+
+    #[test]
     fn ai_advisory_always_has_recovery_actions() {
         let advisory = ai_advisory(
             "This is larger than your typical grocery trip.",
@@ -473,9 +663,8 @@ mod tests {
 
     #[test]
     fn soft_warning_codes_serialize_screaming_snake_case() {
-        let json =
-            serde_json::to_string(&SoftWarningCode::EnvelopeBudgetExceeded).expect("serialize");
-        assert_eq!(json, "\"ENVELOPE_BUDGET_EXCEEDED\"");
+        let json = serde_json::to_string(&SoftWarningCode::EnvelopeOverdraft).expect("serialize");
+        assert_eq!(json, "\"ENVELOPE_OVERDRAFT\"");
     }
 
     #[test]
@@ -508,7 +697,7 @@ mod tests {
     #[test]
     fn warnings_result_can_carry_advisories() {
         let warning = soft_warning(
-            SoftWarningCode::EnvelopeBudgetExceeded,
+            SoftWarningCode::EnvelopeOverdraft,
             "Over budget.",
             post_anyway(),
             vec![],
@@ -565,10 +754,17 @@ mod tests {
         }
     }
 
+    fn now_ms() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64
+    }
+
     fn proposal(lines: Vec<ProposedLine>) -> TransactionProposal {
         TransactionProposal {
             memo: None,
-            txn_date_ms: 1_700_000_000_000,
+            txn_date_ms: now_ms(),
             lines,
         }
     }
@@ -747,5 +943,169 @@ mod tests {
         assert!(codes.contains(&HardErrorCode::UnknownAccount));
         // At least 2 distinct errors
         assert!(codes.len() >= 2);
+    }
+
+    // -- T-013: Tier 2 soft warning integration tests --
+
+    fn warning_codes(result: &ValidationResult) -> Vec<SoftWarningCode> {
+        match result {
+            ValidationResult::Warnings { warnings, .. } => {
+                warnings.as_slice().iter().map(|w| w.code).collect()
+            }
+            _ => vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn soft_warn_future_date() {
+        let pool = test_pool().await;
+        insert_household(&pool, "hh_sw").await;
+        insert_account(&pool, "hh_sw", "acc_a", "debit", false).await;
+        insert_account(&pool, "hh_sw", "acc_b", "credit", false).await;
+
+        let future_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+            + 3 * ONE_DAY_MS;
+
+        let p = TransactionProposal {
+            memo: None,
+            txn_date_ms: future_ms,
+            lines: vec![debit_line("acc_a", 100), credit_line("acc_b", 100)],
+        };
+        let result = validate_proposal(&pool, &p).await;
+        assert!(!result.is_rejected());
+        assert!(warning_codes(&result).contains(&SoftWarningCode::FutureDate));
+    }
+
+    #[tokio::test]
+    async fn soft_warn_stale_date() {
+        let pool = test_pool().await;
+        insert_household(&pool, "hh_sw2").await;
+        insert_account(&pool, "hh_sw2", "acc_c", "debit", false).await;
+        insert_account(&pool, "hh_sw2", "acc_d", "credit", false).await;
+
+        let stale_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+            - 100 * ONE_DAY_MS;
+
+        let p = TransactionProposal {
+            memo: None,
+            txn_date_ms: stale_ms,
+            lines: vec![debit_line("acc_c", 100), credit_line("acc_d", 100)],
+        };
+        let result = validate_proposal(&pool, &p).await;
+        assert!(!result.is_rejected());
+        assert!(warning_codes(&result).contains(&SoftWarningCode::StaleDate));
+    }
+
+    #[tokio::test]
+    async fn soft_warn_large_amount() {
+        let pool = test_pool().await;
+        insert_household(&pool, "hh_sw3").await;
+        insert_account(&pool, "hh_sw3", "acc_e", "debit", false).await;
+        insert_account(&pool, "hh_sw3", "acc_f", "credit", false).await;
+
+        let p = proposal(vec![
+            debit_line("acc_e", LARGE_AMOUNT_CENTS + 1),
+            credit_line("acc_f", LARGE_AMOUNT_CENTS + 1),
+        ]);
+        let result = validate_proposal(&pool, &p).await;
+        assert!(!result.is_rejected());
+        assert!(warning_codes(&result).contains(&SoftWarningCode::LargeAmount));
+    }
+
+    #[tokio::test]
+    async fn soft_warn_envelope_overdraft() {
+        let pool = test_pool().await;
+        insert_household(&pool, "hh_sw4").await;
+        insert_account(&pool, "hh_sw4", "acc_g", "debit", false).await;
+        insert_account(&pool, "hh_sw4", "acc_h", "credit", false).await;
+
+        // Create envelope with a tight budget
+        sqlx::query(
+            "INSERT INTO envelopes (id, household_id, account_id, name, created_at)
+             VALUES ('env1', 'hh_sw4', 'acc_g', 'Groceries', 0)",
+        )
+        .execute(&pool)
+        .await
+        .expect("envelope");
+
+        sqlx::query(
+            "INSERT INTO envelope_periods (id, envelope_id, period_start, period_end, allocated, spent, created_at)
+             VALUES ('ep1', 'env1', 0, 9999999999999, 5000, 4500, 0)",
+        )
+        .execute(&pool)
+        .await
+        .expect("period");
+
+        let p = TransactionProposal {
+            memo: None,
+            txn_date_ms: 1_700_000_000_000,
+            lines: vec![
+                ProposedLine {
+                    account_id: "acc_g".to_string(),
+                    envelope_id: Some("env1".to_string()),
+                    amount_cents: 1000, // spent(4500) + 1000 > allocated(5000)
+                    side: Side::Debit,
+                },
+                credit_line("acc_h", 1000),
+            ],
+        };
+        let result = validate_proposal(&pool, &p).await;
+        assert!(!result.is_rejected());
+        assert!(warning_codes(&result).contains(&SoftWarningCode::EnvelopeOverdraft));
+    }
+
+    #[tokio::test]
+    async fn soft_warn_possible_duplicate() {
+        let pool = test_pool().await;
+        insert_household(&pool, "hh_sw5").await;
+        insert_account(&pool, "hh_sw5", "acc_i", "debit", false).await;
+        insert_account(&pool, "hh_sw5", "acc_j", "credit", false).await;
+
+        let txn_date = now_ms();
+
+        // Seed an existing posted txn with same amount on the same date
+        sqlx::query(
+            "INSERT INTO transactions (id, household_id, txn_date, entry_date, status, source, created_at)
+             VALUES ('existing_txn', 'hh_sw5', ?, 0, 'posted', 'manual', 0)",
+        )
+        .bind(txn_date)
+        .execute(&pool)
+        .await
+        .expect("txn");
+        sqlx::query(
+            "INSERT INTO journal_lines (id, transaction_id, account_id, amount, side, created_at)
+             VALUES ('existing_jl', 'existing_txn', 'acc_i', 7500, 'debit', 0)",
+        )
+        .execute(&pool)
+        .await
+        .expect("line");
+
+        let p = TransactionProposal {
+            memo: None,
+            txn_date_ms: txn_date,
+            lines: vec![debit_line("acc_i", 7500), credit_line("acc_j", 7500)],
+        };
+        let result = validate_proposal(&pool, &p).await;
+        assert!(!result.is_rejected());
+        assert!(warning_codes(&result).contains(&SoftWarningCode::PossibleDuplicate));
+    }
+
+    #[tokio::test]
+    async fn hard_errors_suppress_soft_warnings() {
+        let pool = test_pool().await;
+        // Unbalanced proposal that also has a large amount — should be Rejected not Warnings
+        let p = proposal(vec![
+            debit_line("acc_x", LARGE_AMOUNT_CENTS + 1),
+            credit_line("acc_y", 100),
+        ]);
+        let result = validate_proposal(&pool, &p).await;
+        assert!(result.is_rejected());
+        assert!(error_codes(&result).contains(&HardErrorCode::UnbalancedLines));
     }
 }

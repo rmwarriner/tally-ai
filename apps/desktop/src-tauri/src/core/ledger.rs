@@ -199,9 +199,18 @@ pub async fn create_opening_balance(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use crate::core::proposal::ProposedLine;
     use crate::db::{connection::create_encrypted_db, migrations::run_migrations};
     use tempfile::tempdir;
+
+    fn now_ms() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64
+    }
 
     // -- T-018 helpers --
 
@@ -237,7 +246,7 @@ mod tests {
             equity_account_id: "acc_equity".to_string(),
             amount_cents: 50000,
             primary_side: Side::Debit,
-            txn_date_ms: 1_700_000_000_000,
+            txn_date_ms: now_ms(),
         }
     }
 
@@ -280,7 +289,7 @@ mod tests {
     fn valid_proposal() -> TransactionProposal {
         TransactionProposal {
             memo: Some("Test income".to_string()),
-            txn_date_ms: 1_700_000_000_000,
+            txn_date_ms: now_ms(),
             lines: vec![
                 ProposedLine {
                     account_id: "acc_checking".to_string(),
@@ -422,7 +431,7 @@ mod tests {
         // Invalid: unbalanced (100 debit vs 200 credit)
         let bad_proposal = TransactionProposal {
             memo: None,
-            txn_date_ms: 1_700_000_000_000,
+            txn_date_ms: now_ms(),
             lines: vec![
                 ProposedLine {
                     account_id: "acc_checking".to_string(),
