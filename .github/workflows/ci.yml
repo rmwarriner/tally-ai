@@ -87,7 +87,7 @@ jobs:
             ${{ runner.os }}-pnpm-store-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --allow-scripts
+        run: pnpm install --frozen-lockfile --config.ignore-scripts=false
 
       - name: Run tests
         run: pnpm test
@@ -125,7 +125,7 @@ jobs:
             ${{ runner.os }}-pnpm-store-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --allow-scripts
+        run: pnpm install --frozen-lockfile --config.ignore-scripts=false
 
       - name: Type check
         run: pnpm typecheck
