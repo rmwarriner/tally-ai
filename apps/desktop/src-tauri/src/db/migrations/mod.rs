@@ -67,6 +67,7 @@ mod tests {
 
         // AI layer
         assert!(table_names.contains(&"payee_memory"), "Missing payee_memory table");
+        assert!(table_names.contains(&"session_summaries"), "Missing session_summaries table");
 
         // Verify no deprecated tables
         assert!(

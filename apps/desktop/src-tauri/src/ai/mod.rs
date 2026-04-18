@@ -4,6 +4,7 @@ pub mod classifier;
 pub mod parser;
 pub mod payee_memory;
 pub mod prompt;
+pub mod session_summary;
 pub mod snapshot;
 
 use serde::{Deserialize, Serialize};
