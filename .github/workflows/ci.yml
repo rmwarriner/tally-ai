@@ -39,8 +39,6 @@ jobs:
               /^\.npmrc$/,
               /^\.gitignore$/,
               /^LICENSE$/,
-              /^package\.json$/,
-              /^pnpm-lock\.yaml$/,
               /^Cargo\.lock$/,
               /^\.husky\//,
               /^\.prettierrc/,
@@ -60,17 +58,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 10
+        uses: pnpm/action-setup@v6
 
       - name: Get pnpm store directory
         id: pnpm-cache
@@ -79,7 +75,7 @@ jobs:
           echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
 
       - name: Setup pnpm cache
-        uses: actions/cache@v3
+        uses: actions/cache@v5
         with:
           path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -88,6 +84,31 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Show checkout and dependency state
+        run: |
+          echo "sha=$(git rev-parse HEAD)"
+          echo "--- root package.json ---"
+          sed -n '1,220p' package.json
+          echo "--- core-types package.json ---"
+          sed -n '1,220p' packages/core-types/package.json
+          echo "--- desktop package.json ---"
+          sed -n '1,220p' apps/desktop/package.json
+          echo "--- resolved versions in core-types ---"
+          pnpm --filter @tally/core-types exec node -e "console.log('vitest', require('vitest/package.json').version)"
+          pnpm --filter @tally/core-types exec node -e "console.log('@vitest/coverage-v8', require('@vitest/coverage-v8/package.json').version)"
+          echo "--- resolved paths in core-types ---"
+          pnpm --filter @tally/core-types exec node -e "console.log(require.resolve('vitest/package.json'))"
+          pnpm --filter @tally/core-types exec node -e "console.log(require.resolve('@vitest/coverage-v8/package.json'))"
+          echo "--- pnpm list in core-types ---"
+          pnpm --filter @tally/core-types list vitest @vitest/coverage-v8
+
+      - name: Show tool versions
+        run: |
+          node -v
+          pnpm -v
+          pnpm --filter @tally/core-types exec node -p "require('vitest/package.json').version"
+          pnpm --filter @tally/core-types exec node -p "require('@vitest/coverage-v8/package.json').version"
 
       - name: Run tests
         run: pnpm test
@@ -98,17 +119,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 10
+        uses: pnpm/action-setup@v6
 
       - name: Get pnpm store directory
         id: pnpm-cache
@@ -117,7 +136,7 @@ jobs:
           echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
 
       - name: Setup pnpm cache
-        uses: actions/cache@v3
+        uses: actions/cache@v5
         with:
           path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -136,7 +155,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache apt packages
         uses: awalsh128/cache-apt-pkgs-action@latest
