@@ -9,6 +9,7 @@
     "typecheck": "pnpm -r typecheck",
     "prepare": "husky"
   },
+  "packageManager": "pnpm@10.32.1",
   "engines": {
     "node": ">=22",
     "pnpm": ">=10"
