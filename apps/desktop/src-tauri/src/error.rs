@@ -49,6 +49,10 @@ impl<T> NonEmpty<T> {
         self.0.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
     pub fn iter(&self) -> std::slice::Iter<'_, T> {
         self.0.iter()
     }
