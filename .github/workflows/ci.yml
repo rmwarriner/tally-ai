@@ -84,6 +84,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      - name: Show tool versions
+        run: |
+          node -v
+          pnpm -v
+          pnpm --filter @tally/core-types exec node -p "require('vitest/package.json').version"
+          pnpm --filter @tally/core-types exec node -p "require('@vitest/coverage-v8/package.json').version"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
