@@ -229,7 +229,7 @@ mod tests {
         )
         .bind(&id)
         .bind(&hid)
-        .bind(&new_ulid())
+        .bind(new_ulid())
         .bind("boundary")
         .bind(boundary)
         .execute(&pool)

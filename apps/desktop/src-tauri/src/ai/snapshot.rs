@@ -291,12 +291,12 @@ mod tests {
         let checking = insert_account(&pool, &hid, "Checking", "asset", "debit").await;
         let equity = insert_account(&pool, &hid, "Equity", "equity", "credit").await;
         let tid = insert_posted_txn(&pool, &hid, 0).await;
-        insert_line(&pool, &tid, &checking, 100_00, "debit").await;
-        insert_line(&pool, &tid, &equity, 100_00, "credit").await;
+        insert_line(&pool, &tid, &checking, 10_000, "debit").await;
+        insert_line(&pool, &tid, &equity, 10_000, "credit").await;
 
         let snap = build_snapshot(&pool, &hid, 0).await.unwrap();
         let checking_bal = snap.balances.iter().find(|b| b.account_name == "Checking").unwrap();
-        assert_eq!(checking_bal.balance_cents, 100_00);
+        assert_eq!(checking_bal.balance_cents, 10_000);
     }
 
     #[tokio::test]
@@ -316,8 +316,8 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        insert_line(&pool, &tid, &checking, 500_00, "debit").await;
-        insert_line(&pool, &tid, &equity, 500_00, "credit").await;
+        insert_line(&pool, &tid, &checking, 50_000, "debit").await;
+        insert_line(&pool, &tid, &equity, 50_000, "credit").await;
 
         let snap = build_snapshot(&pool, &hid, 0).await.unwrap();
         let bal = snap.balances.iter().find(|b| b.account_name == "Checking").unwrap();
@@ -369,7 +369,7 @@ mod tests {
                 account_id: "a1".to_string(),
                 account_name: "Checking".to_string(),
                 account_type: "asset".to_string(),
-                balance_cents: 1_234_56,
+                balance_cents: 123_456,
             }],
             envelopes: vec![],
         };

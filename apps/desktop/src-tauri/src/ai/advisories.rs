@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn unknown_payee_has_recovery_actions() {
         let a = unknown_payee("Costco");
-        assert!(a.actions.len() >= 1);
+        assert!(!a.actions.is_empty());
         assert!(a.user_message.contains("Costco"));
     }
 
@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn suggested_account_has_recovery_actions() {
         let a = suggested_account("Netflix", "Subscriptions");
-        assert!(a.actions.len() >= 1);
+        assert!(!a.actions.is_empty());
         assert!(a.user_message.contains("Netflix"));
         assert!(a.user_message.contains("Subscriptions"));
     }
@@ -107,7 +107,7 @@ mod tests {
     fn possible_duplicate_today() {
         let a = possible_duplicate(0);
         assert!(a.user_message.contains("today"));
-        assert!(a.actions.len() >= 1);
+        assert!(!a.actions.is_empty());
     }
 
     #[test]
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn envelope_near_limit_has_recovery_actions() {
         let a = envelope_near_limit("Groceries", 85);
-        assert!(a.actions.len() >= 1);
+        assert!(!a.actions.is_empty());
         assert!(a.user_message.contains("Groceries"));
         assert!(a.user_message.contains("85%"));
     }
