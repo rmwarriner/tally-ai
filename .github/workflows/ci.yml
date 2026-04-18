@@ -39,8 +39,6 @@ jobs:
               /^\.npmrc$/,
               /^\.gitignore$/,
               /^LICENSE$/,
-              /^package\.json$/,
-              /^pnpm-lock\.yaml$/,
               /^Cargo\.lock$/,
               /^\.husky\//,
               /^\.prettierrc/,
