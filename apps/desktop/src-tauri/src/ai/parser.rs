@@ -1,5 +1,6 @@
-// TransactionProposal parser — T-020
-// Extracts typed proposal from Claude tool-use response; never parses free-form text.
+// TransactionProposal parser — T-020 / T-026
+// extract_proposal: typed extraction from Claude tool-use response; never parses free-form text.
+// extract_proposal_from_text: T-026 fallback — finds JSON in a text response.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -22,6 +23,7 @@ pub enum ContentBlock {
     ToolUse { id: String, name: String, input: Value },
 }
 
+/// Extract a TransactionProposal from the tool-use content block of a Claude response.
 pub fn extract_proposal(response: &ClaudeResponse) -> Result<TransactionProposal, AdapterError> {
     let input = response
         .content
@@ -33,6 +35,41 @@ pub fn extract_proposal(response: &ClaudeResponse) -> Result<TransactionProposal
         .ok_or(AdapterError::NoToolUse)?;
 
     serde_json::from_value(input.clone()).map_err(|e| AdapterError::ParseError(e.to_string()))
+}
+
+/// T-026 fallback: extract a TransactionProposal from a plain-text Claude response.
+/// Looks for a ```json...``` block first, then a raw `{...}` object.
+pub fn extract_proposal_from_text(text: &str) -> Result<TransactionProposal, AdapterError> {
+    let json_str = find_json_in_text(text).ok_or(AdapterError::NoToolUse)?;
+    serde_json::from_str(json_str).map_err(|e| AdapterError::ParseError(e.to_string()))
+}
+
+fn find_json_in_text(text: &str) -> Option<&str> {
+    // Try ```json ... ``` block.
+    if let Some(start) = text.find("```json") {
+        let after = &text[start + 7..];
+        if let Some(end) = after.find("```") {
+            return Some(after[..end].trim());
+        }
+    }
+    // Try ``` ... ``` block (language-untagged).
+    if let Some(start) = text.find("```") {
+        let after = &text[start + 3..];
+        if let Some(end) = after.find("```") {
+            let candidate = after[..end].trim();
+            if candidate.starts_with('{') {
+                return Some(candidate);
+            }
+        }
+    }
+    // Last resort: outermost { ... }.
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end > start {
+        Some(&text[start..=end])
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -56,6 +93,8 @@ mod tests {
             }],
         }
     }
+
+    // --- extract_proposal ---
 
     #[test]
     fn extracts_proposal_from_valid_tool_use() {
@@ -173,5 +212,44 @@ mod tests {
         let proposal = extract_proposal(&resp).unwrap();
         assert_eq!(proposal.lines[0].envelope_id.as_deref(), Some("env_food"));
         assert!(proposal.lines[1].envelope_id.is_none());
+    }
+
+    // --- extract_proposal_from_text (T-026) ---
+
+    fn valid_json_proposal() -> &'static str {
+        r#"{"txn_date_ms":1700000000000,"lines":[{"account_id":"acc_a","amount_cents":100,"side":"debit"},{"account_id":"acc_b","amount_cents":100,"side":"credit"}]}"#
+    }
+
+    #[test]
+    fn fallback_extracts_from_json_code_block() {
+        let text = format!("Here is the transaction:\n```json\n{}\n```", valid_json_proposal());
+        let proposal = extract_proposal_from_text(&text).unwrap();
+        assert_eq!(proposal.lines.len(), 2);
+    }
+
+    #[test]
+    fn fallback_extracts_from_untagged_code_block() {
+        let text = format!("```\n{}\n```", valid_json_proposal());
+        let proposal = extract_proposal_from_text(&text).unwrap();
+        assert_eq!(proposal.txn_date_ms, 1_700_000_000_000);
+    }
+
+    #[test]
+    fn fallback_extracts_from_raw_json_in_prose() {
+        let text = format!("Sure! Here: {} Does that look right?", valid_json_proposal());
+        let proposal = extract_proposal_from_text(&text).unwrap();
+        assert_eq!(proposal.lines.len(), 2);
+    }
+
+    #[test]
+    fn fallback_errors_when_no_json_present() {
+        let text = "I cannot process that request.";
+        assert!(matches!(extract_proposal_from_text(text), Err(AdapterError::NoToolUse)));
+    }
+
+    #[test]
+    fn fallback_errors_on_invalid_schema() {
+        let text = r#"{"not_a_proposal": true}"#;
+        assert!(matches!(extract_proposal_from_text(text), Err(AdapterError::ParseError(_))));
     }
 }

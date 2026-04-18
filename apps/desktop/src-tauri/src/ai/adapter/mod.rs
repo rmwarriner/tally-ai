@@ -3,33 +3,10 @@
 pub mod claude;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::ai::BuiltPrompt;
 use crate::core::proposal::TransactionProposal;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    User,
-    Assistant,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub role: Role,
-    pub content: String,
-}
-
-impl Message {
-    pub fn user(content: impl Into<String>) -> Self {
-        Self { role: Role::User, content: content.into() }
-    }
-
-    pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: Role::Assistant, content: content.into() }
-    }
-}
 
 #[derive(Debug, Error)]
 pub enum AdapterError {
@@ -45,5 +22,5 @@ pub enum AdapterError {
 
 #[async_trait]
 pub trait AiAdapter: Send + Sync {
-    async fn propose(&self, messages: &[Message]) -> Result<TransactionProposal, AdapterError>;
+    async fn propose(&self, prompt: &BuiltPrompt) -> Result<TransactionProposal, AdapterError>;
 }

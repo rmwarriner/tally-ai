@@ -65,6 +65,9 @@ mod tests {
         // Audit log
         assert!(table_names.contains(&"audit_log"), "Missing audit_log table");
 
+        // AI layer
+        assert!(table_names.contains(&"payee_memory"), "Missing payee_memory table");
+
         // Verify no deprecated tables
         assert!(
             !table_names.contains(&"journal_entries"),
