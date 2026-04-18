@@ -32,7 +32,6 @@ struct TxnRow {
 
 #[derive(sqlx::FromRow)]
 struct LineRow {
-    id: String,
     account_id: String,
     envelope_id: Option<String>,
     amount: i64,
