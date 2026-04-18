@@ -87,6 +87,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Show checkout and dependency state
+        run: |
+          echo "sha=$(git rev-parse HEAD)"
+          echo "--- root package.json ---"
+          sed -n '1,220p' package.json
+          echo "--- core-types package.json ---"
+          sed -n '1,220p' packages/core-types/package.json
+          echo "--- desktop package.json ---"
+          sed -n '1,220p' apps/desktop/package.json
+          echo "--- resolved versions in core-types ---"
+          pnpm --filter @tally/core-types exec node -e "console.log('vitest', require('vitest/package.json').version)"
+          pnpm --filter @tally/core-types exec node -e "console.log('@vitest/coverage-v8', require('@vitest/coverage-v8/package.json').version)"
+          echo "--- resolved paths in core-types ---"
+          pnpm --filter @tally/core-types exec node -e "console.log(require.resolve('vitest/package.json'))"
+          pnpm --filter @tally/core-types exec node -e "console.log(require.resolve('@vitest/coverage-v8/package.json'))"
+          echo "--- pnpm list in core-types ---"
+          pnpm --filter @tally/core-types list vitest @vitest/coverage-v8
+
       - name: Show tool versions
         run: |
           node -v
