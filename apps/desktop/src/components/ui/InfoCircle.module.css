@@ -1,0 +1,39 @@
+.root {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.circle {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--color-muted, #6b7280);
+  color: var(--color-muted, #6b7280);
+  background: transparent;
+  font-size: 10px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.button {
+  padding: 0;
+  cursor: pointer;
+}
+
+.button:hover,
+.button:focus-visible,
+.root:hover .icon {
+  border-color: var(--color-info, #2563eb);
+  background-color: var(--color-info, #2563eb);
+  color: #ffffff;
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--color-info, #2563eb);
+  outline-offset: 2px;
+}

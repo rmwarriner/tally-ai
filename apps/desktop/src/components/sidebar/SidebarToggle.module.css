@@ -1,0 +1,9 @@
+.container {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 10px 0;
+}
+
+.info {
+  flex-shrink: 0;
+}
