@@ -1,10 +1,27 @@
-import { render } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import "@testing-library/jest-dom/vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
 import App from "./App";
 
 describe("App", () => {
-  it("renders the app shell", () => {
+  it("renders app shell with sidebar and chat regions", () => {
     render(<App />);
-    expect(document.getElementById("app-shell")).not.toBeNull();
+
+    expect(screen.getByRole("complementary", { name: /financial health/i })).toBeInTheDocument();
+    expect(screen.getByRole("log", { name: /chat thread/i })).toBeInTheDocument();
+  });
+
+  it("Cmd/Ctrl+B toggles sidebar width", () => {
+    render(<App />);
+
+    const sidebar = screen.getByRole("complementary", { name: /financial health/i });
+    expect(sidebar).toHaveStyle({ width: "280px" });
+
+    fireEvent.keyDown(window, { key: "b", metaKey: true });
+    expect(sidebar).toHaveStyle({ width: "0px" });
+
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+    expect(sidebar).toHaveStyle({ width: "280px" });
   });
 });

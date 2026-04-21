@@ -1,0 +1,17 @@
+:root {
+  font-family: "SF Pro Text", "Segoe UI", sans-serif;
+  color: #111827;
+  background-color: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}

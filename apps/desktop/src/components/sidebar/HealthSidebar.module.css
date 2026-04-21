@@ -1,0 +1,20 @@
+.sidebar {
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width 200ms ease;
+  border-right: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-surface, #f9fafb);
+}
+
+.content {
+  width: 280px;
+  height: calc(100% - 24px);
+  padding: 12px 16px;
+  box-sizing: border-box;
+}
+
+.placeholder {
+  margin: 0;
+  color: var(--color-muted, #6b7280);
+  font-style: italic;
+}
