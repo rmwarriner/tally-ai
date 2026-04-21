@@ -1,0 +1,39 @@
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.date {
+  min-width: 48px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--color-muted, #6b7280);
+  background: var(--color-surface-2);
+  border-radius: 10px;
+  padding: 2px 6px;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.amount {
+  font-family: "SF Mono", "JetBrains Mono", monospace;
+  text-align: right;
+  font-size: 13px;
+}

@@ -2,6 +2,16 @@
   font-family: "SF Pro Text", "Segoe UI", sans-serif;
   color: #111827;
   background-color: #ffffff;
+  --color-bg: #ffffff;
+  --color-surface: #f9fafb;
+  --color-surface-2: rgba(0, 0, 0, 0.06);
+  --color-border: #e5e7eb;
+  --color-text: #111827;
+  --color-muted: #6b7280;
+  --color-info: #2563eb;
+  --color-positive: #2d9e6b;
+  --color-caution: #d4860a;
+  --color-danger: #c0392b;
 }
 
 * {

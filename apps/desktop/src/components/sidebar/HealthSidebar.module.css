@@ -11,10 +11,5 @@
   height: calc(100% - 24px);
   padding: 12px 16px;
   box-sizing: border-box;
-}
-
-.placeholder {
-  margin: 0;
-  color: var(--color-muted, #6b7280);
-  font-style: italic;
+  overflow-y: auto;
 }

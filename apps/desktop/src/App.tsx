@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 
 import { ChatThread } from "./components/chat/ChatThread";
 import { HealthSidebar } from "./components/sidebar/HealthSidebar";
@@ -6,6 +7,7 @@ import { useUIStore } from "./stores/uiStore";
 import styles from "./App.module.css";
 
 export default function App() {
+  const [queryClient] = useState(() => new QueryClient());
   const sidebarOpen = useUIStore((state) => state.sidebarOpen);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
 
@@ -24,11 +26,13 @@ export default function App() {
   }, [toggleSidebar]);
 
   return (
-    <div id="app-shell" className={styles.shell}>
-      <HealthSidebar open={sidebarOpen} onToggle={toggleSidebar} />
-      <main className={styles.main}>
-        <ChatThread />
-      </main>
-    </div>
+    <QueryClientProvider client={queryClient}>
+      <div id="app-shell" className={styles.shell}>
+        <HealthSidebar open={sidebarOpen} onToggle={toggleSidebar} />
+        <main className={styles.main}>
+          <ChatThread />
+        </main>
+      </div>
+    </QueryClientProvider>
   );
 }

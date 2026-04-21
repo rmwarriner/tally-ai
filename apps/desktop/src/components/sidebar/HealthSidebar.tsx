@@ -1,3 +1,6 @@
+import { AccountsPanel } from "./AccountsPanel";
+import { ComingUpPanel } from "./ComingUpPanel";
+import { EnvelopesPanel } from "./EnvelopesPanel";
 import { SidebarToggle } from "./SidebarToggle";
 import styles from "./HealthSidebar.module.css";
 
@@ -16,7 +19,9 @@ export function HealthSidebar({ open, onToggle }: HealthSidebarProps) {
       <SidebarToggle open={open} onToggle={onToggle} />
       {open ? (
         <div className={styles.content}>
-          <p className={styles.placeholder}>Health sidebar</p>
+          <AccountsPanel />
+          <EnvelopesPanel />
+          <ComingUpPanel />
         </div>
       ) : null}
     </aside>
