@@ -27,11 +27,11 @@
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@vitejs/plugin-react": "^4",
+    "@vitejs/plugin-react": "^6",
     "@vitest/coverage-v8": "^4.1.4",
     "jsdom": "^29.0.2",
     "typescript": "^6",
-    "vite": "^6",
+    "vite": "^8",
     "vitest": "^4.1.4"
   }
 }
