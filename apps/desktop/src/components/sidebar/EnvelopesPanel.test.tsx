@@ -28,7 +28,7 @@ describe("EnvelopesPanel", () => {
       ],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof useEnvelopeStatuses>);
+    } as unknown as ReturnType<typeof useEnvelopeStatuses>);
 
     render(<EnvelopesPanel />);
 
@@ -47,7 +47,7 @@ describe("EnvelopesPanel", () => {
       ],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof useEnvelopeStatuses>);
+    } as unknown as ReturnType<typeof useEnvelopeStatuses>);
 
     render(<EnvelopesPanel />);
 
@@ -59,7 +59,7 @@ describe("EnvelopesPanel", () => {
       data: [],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof useEnvelopeStatuses>);
+    } as unknown as ReturnType<typeof useEnvelopeStatuses>);
 
     render(<EnvelopesPanel />);
 

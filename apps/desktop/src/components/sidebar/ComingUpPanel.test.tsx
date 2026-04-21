@@ -28,7 +28,7 @@ describe("ComingUpPanel", () => {
       ],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof usePendingTransactions>);
+    } as unknown as ReturnType<typeof usePendingTransactions>);
 
     render(<ComingUpPanel />);
 
@@ -48,7 +48,7 @@ describe("ComingUpPanel", () => {
       ],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof usePendingTransactions>);
+    } as unknown as ReturnType<typeof usePendingTransactions>);
 
     render(<ComingUpPanel />);
 
@@ -66,7 +66,7 @@ describe("ComingUpPanel", () => {
       ],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof usePendingTransactions>);
+    } as unknown as ReturnType<typeof usePendingTransactions>);
 
     render(<ComingUpPanel />);
 
@@ -78,7 +78,7 @@ describe("ComingUpPanel", () => {
       data: [],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof usePendingTransactions>);
+    } as unknown as ReturnType<typeof usePendingTransactions>);
 
     render(<ComingUpPanel />);
 

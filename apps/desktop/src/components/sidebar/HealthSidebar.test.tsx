@@ -35,13 +35,13 @@ describe("HealthSidebar", () => {
       data: [],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof useEnvelopeStatuses>);
+    } as unknown as ReturnType<typeof useEnvelopeStatuses>);
 
     mockUsePendingTransactions.mockReturnValue({
       data: [],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof usePendingTransactions>);
+    } as unknown as ReturnType<typeof usePendingTransactions>);
   });
 
   it("shows panels when state is open", () => {

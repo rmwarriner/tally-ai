@@ -29,7 +29,7 @@ describe("AccountsPanel", () => {
       ],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof useAccountBalances>);
+    } as unknown as ReturnType<typeof useAccountBalances>);
 
     render(<AccountsPanel />);
 
@@ -49,7 +49,7 @@ describe("AccountsPanel", () => {
       ],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof useAccountBalances>);
+    } as unknown as ReturnType<typeof useAccountBalances>);
 
     render(<AccountsPanel />);
 
@@ -61,7 +61,7 @@ describe("AccountsPanel", () => {
       data: undefined,
       isLoading: true,
       error: null,
-    } as ReturnType<typeof useAccountBalances>);
+    } as unknown as ReturnType<typeof useAccountBalances>);
 
     render(<AccountsPanel />);
 
@@ -73,7 +73,7 @@ describe("AccountsPanel", () => {
       data: [],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof useAccountBalances>);
+    } as unknown as ReturnType<typeof useAccountBalances>);
 
     render(<AccountsPanel />);
 
