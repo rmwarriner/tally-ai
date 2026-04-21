@@ -4,18 +4,21 @@ import { useUIStore } from "./uiStore";
 
 describe("useUIStore", () => {
   beforeEach(() => {
-    useUIStore.setState({ sidebarOpen: true });
+    useUIStore.setState({ sidebarState: "open" });
   });
 
   it("starts open", () => {
-    expect(useUIStore.getState().sidebarOpen).toBe(true);
+    expect(useUIStore.getState().sidebarState).toBe("open");
   });
 
-  it("toggleSidebar closes then reopens", () => {
+  it("cycles open -> icon -> hidden -> open", () => {
     useUIStore.getState().toggleSidebar();
-    expect(useUIStore.getState().sidebarOpen).toBe(false);
+    expect(useUIStore.getState().sidebarState).toBe("icon");
 
     useUIStore.getState().toggleSidebar();
-    expect(useUIStore.getState().sidebarOpen).toBe(true);
+    expect(useUIStore.getState().sidebarState).toBe("hidden");
+
+    useUIStore.getState().toggleSidebar();
+    expect(useUIStore.getState().sidebarState).toBe("open");
   });
 });

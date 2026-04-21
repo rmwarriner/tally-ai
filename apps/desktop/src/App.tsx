@@ -8,7 +8,7 @@ import styles from "./App.module.css";
 
 export default function App() {
   const [queryClient] = useState(() => new QueryClient());
-  const sidebarOpen = useUIStore((state) => state.sidebarOpen);
+  const sidebarState = useUIStore((state) => state.sidebarState);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
 
   useEffect(() => {
@@ -28,7 +28,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <div id="app-shell" className={styles.shell}>
-        <HealthSidebar open={sidebarOpen} onToggle={toggleSidebar} />
+        <HealthSidebar state={sidebarState} onToggle={toggleSidebar} />
         <main className={styles.main}>
           <ChatThread />
         </main>

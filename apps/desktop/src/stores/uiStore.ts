@@ -1,13 +1,21 @@
 import { create } from "zustand";
 
+export type SidebarState = "open" | "icon" | "hidden";
+
 interface UIStore {
-  sidebarOpen: boolean;
+  sidebarState: SidebarState;
   toggleSidebar: () => void;
 }
 
+const NEXT_STATE: Record<SidebarState, SidebarState> = {
+  open: "icon",
+  icon: "hidden",
+  hidden: "open",
+};
+
 export const useUIStore = create<UIStore>((set) => ({
-  sidebarOpen: true,
+  sidebarState: "open",
   toggleSidebar: () => {
-    set((state) => ({ sidebarOpen: !state.sidebarOpen }));
+    set((state) => ({ sidebarState: NEXT_STATE[state.sidebarState] }));
   },
 }));
