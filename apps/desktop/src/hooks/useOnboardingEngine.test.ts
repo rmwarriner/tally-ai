@@ -21,6 +21,7 @@ function makeDeps(overrides: Partial<OnboardingDeps> = {}): OnboardingDeps {
     addSetupCard: vi.fn(),
     addHandoffMessage: vi.fn(),
     invoke: mockInvoke,
+    invalidateSidebar: vi.fn(),
     ...overrides,
   };
 }
@@ -420,5 +421,40 @@ describe("migration path", () => {
     await handler.handleInput("looks good");
     expect(addHandoffMessage).toHaveBeenCalled();
     expect(useOnboardingStore.getState().phase).toBe("complete");
+  });
+});
+
+describe("sidebar invalidation", () => {
+  it("calls invalidateSidebar after each DB write", async () => {
+    const invalidateSidebar = vi.fn();
+    const mockInvokeLocal = vi.fn()
+      .mockResolvedValueOnce(false)       // check_setup_status (read, no invalidate)
+      .mockResolvedValueOnce("hh_01")     // create_household (write, invalidate)
+      .mockResolvedValueOnce("ac_01")     // create_account (write, invalidate)
+      .mockResolvedValueOnce(undefined)   // set_opening_balance (write, invalidate)
+      .mockResolvedValueOnce("en_01");    // create_envelope (write, invalidate)
+
+    const handler = buildOnboardingHandler({
+      addSystemMessage: vi.fn(),
+      addSetupCard: vi.fn(),
+      addHandoffMessage: vi.fn(),
+      invoke: mockInvokeLocal as never,
+      invalidateSidebar,
+    });
+
+    await handler.checkAndStart();
+    await handler.handleInput("fresh");
+    await handler.handleInput("Smith Family");
+    await handler.handleInput("America/Chicago");
+    await handler.handleInput("correcthorsebatterystaple");
+    await handler.handleInput("correcthorsebatterystaple"); // confirm passphrase → create_household
+    await handler.handleInput("Checking");
+    await handler.handleInput("1000"); // create_account + set_opening_balance
+    await handler.handleInput("done"); // more_accounts → envelopes
+    await handler.handleInput("Groceries"); // create_envelope
+
+    // One invalidation per write: create_household, create_account,
+    // set_opening_balance, create_envelope = 4 writes total for the fresh path.
+    expect(invalidateSidebar).toHaveBeenCalledTimes(4);
   });
 });

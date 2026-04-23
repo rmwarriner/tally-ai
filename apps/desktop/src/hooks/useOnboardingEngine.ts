@@ -5,6 +5,7 @@ import type { SetupCardVariant } from "../components/onboarding/SetupCard";
 import { useChatStore } from "../stores/chatStore";
 import { useOnboardingStore } from "../stores/onboardingStore";
 import type { FreshStep, MigrationStep } from "../stores/onboardingStore";
+import { useInvalidateSidebar } from "./useInvalidateSidebar";
 
 export interface OnboardingDeps {
   addSystemMessage: (text: string, tone?: "info" | "error") => void;
@@ -16,6 +17,7 @@ export interface OnboardingDeps {
     starterPrompts: string[],
   ) => void;
   invoke: typeof tauriInvoke;
+  invalidateSidebar: () => void | Promise<void>;
 }
 
 const STARTER_PROMPTS = [
@@ -118,6 +120,7 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
           timezone,
           passphrase,
         });
+        void deps.invalidateSidebar();
         store.getState().patchDraft({ passphrase: "" }); // clear from memory after use
         deps.addSetupCard(
           "household_created",
@@ -162,10 +165,12 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
           name: account.name,
           account_type: account.type,
         });
+        void deps.invalidateSidebar();
         await deps.invoke("set_opening_balance", {
           account_id: accountId,
           amount_cents: amountCents,
         });
+        void deps.invalidateSidebar();
 
         deps.addSetupCard(
           "account_created",
@@ -207,6 +212,7 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
         const name = input.trim();
         store.getState().addDraftEnvelope({ name });
         await deps.invoke("create_envelope", { name });
+        void deps.invalidateSidebar();
         deps.addSetupCard("envelope_created", `${name} envelope created`, "Budget category added");
         store.getState().setFreshStep("more_envelopes");
         deps.addSystemMessage("Add another envelope? (yes / no)", "info");
@@ -281,6 +287,7 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
         const content = input.trim();
         state.patchDraft({ hledgerContent: content });
         const summary = await deps.invoke<string>("import_hledger", { content });
+        void deps.invalidateSidebar();
         deps.addSystemMessage(`Import complete: ${summary}`, "info");
         state.setMigrationStep("coa_mapping");
         deps.addSystemMessage(
@@ -349,12 +356,14 @@ export function useOnboardingEngine() {
   const addSetupCard = useChatStore((s) => s.addSetupCard);
   const addHandoffMessage = useChatStore((s) => s.addHandoffMessage);
   const phase = useOnboardingStore((s) => s.phase);
+  const invalidateSidebar = useInvalidateSidebar();
 
   const deps: OnboardingDeps = {
     addSystemMessage,
     addSetupCard,
     addHandoffMessage,
     invoke: tauriInvoke,
+    invalidateSidebar,
   };
 
   const handler = buildOnboardingHandler(deps);
