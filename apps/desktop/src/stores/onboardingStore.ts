@@ -1,0 +1,104 @@
+import { create } from "zustand";
+
+import type { AccountType } from "@tally/core-types";
+
+export type OnboardingPhase = "checking" | "path_select" | "fresh_start" | "migration" | "complete";
+
+export type FreshStep =
+  | "welcome"
+  | "household_name"
+  | "timezone"
+  | "passphrase"
+  | "confirm_passphrase"
+  | "accounts"
+  | "account_balance"
+  | "more_accounts"
+  | "envelopes"
+  | "more_envelopes"
+  | "done";
+
+export type MigrationStep = "welcome" | "file_drop" | "coa_mapping" | "done";
+
+export interface DraftAccount {
+  name: string;
+  type: AccountType;
+  balanceCents: number;
+}
+
+export interface DraftEnvelope {
+  name: string;
+}
+
+export interface OnboardingDraft {
+  householdName: string;
+  timezone: string;
+  passphrase: string;
+  accounts: DraftAccount[];
+  envelopes: DraftEnvelope[];
+  hledgerContent?: string;
+}
+
+interface OnboardingStore {
+  phase: OnboardingPhase;
+  freshStep: FreshStep;
+  migrationStep: MigrationStep;
+  currentAccountIndex: number;
+  draft: OnboardingDraft;
+
+  setPhase: (phase: OnboardingPhase) => void;
+  setFreshStep: (step: FreshStep) => void;
+  setMigrationStep: (step: MigrationStep) => void;
+  patchDraft: (patch: Partial<OnboardingDraft>) => void;
+  addDraftAccount: (account: DraftAccount) => void;
+  addDraftEnvelope: (envelope: DraftEnvelope) => void;
+  advanceAccountIndex: () => void;
+}
+
+const INITIAL_DRAFT: OnboardingDraft = {
+  householdName: "",
+  timezone: "",
+  passphrase: "",
+  accounts: [],
+  envelopes: [],
+};
+
+function makeInitialState() {
+  return {
+    phase: "checking" as OnboardingPhase,
+    freshStep: "welcome" as FreshStep,
+    migrationStep: "welcome" as MigrationStep,
+    currentAccountIndex: 0,
+    draft: { ...INITIAL_DRAFT, accounts: [], envelopes: [] },
+  };
+}
+
+export const useOnboardingStore = create<OnboardingStore>((set) => ({
+  ...makeInitialState(),
+
+  setPhase: (phase) => {
+    set((s) => ({
+      phase,
+      freshStep: phase === "fresh_start" ? "welcome" : s.freshStep,
+      migrationStep: phase === "migration" ? "welcome" : s.migrationStep,
+    }));
+  },
+
+  setFreshStep: (step) => set({ freshStep: step }),
+
+  setMigrationStep: (step) => set({ migrationStep: step }),
+
+  patchDraft: (patch) =>
+    set((s) => ({ draft: { ...s.draft, ...patch } })),
+
+  addDraftAccount: (account) =>
+    set((s) => ({ draft: { ...s.draft, accounts: [...s.draft.accounts, account] } })),
+
+  addDraftEnvelope: (envelope) =>
+    set((s) => ({ draft: { ...s.draft, envelopes: [...s.draft.envelopes, envelope] } })),
+
+  advanceAccountIndex: () =>
+    set((s) => ({ currentAccountIndex: s.currentAccountIndex + 1 })),
+}));
+
+// Expose initial state for test resets
+useOnboardingStore.getInitialState = makeInitialState;

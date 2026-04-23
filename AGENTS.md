@@ -3,7 +3,7 @@
 ## Project identity
 
 Tally.ai is a conversational household finance app built with Tauri 2 (Rust backend),
-React/TypeScript frontend, and Codex AI. The user interacts exclusively through
+React/TypeScript frontend, and Claude AI. The user interacts exclusively through
 a chat interface. There are no forms and no edit screens — all writes go through chat.
 
 ## Non-negotiable architectural rules
@@ -64,7 +64,7 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 ## AI orchestration
 
-- Codex API: always use tool use for TransactionProposal output.
+- Claude API: always use tool use for TransactionProposal output.
 
 - Never parse free-form text to extract transaction data.
 
@@ -78,7 +78,7 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 - Desktop only (Tauri). No mobile, no sync, no multi-user.
 
-- Codex backend only. No GPT, Gemini, or Ollama yet.
+- Claude backend only. No GPT, Gemini, or Ollama yet.
 
 - Manual entry only. No SimpleFIN, no file import, no folder watch.
 
