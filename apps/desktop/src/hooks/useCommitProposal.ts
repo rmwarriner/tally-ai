@@ -3,6 +3,7 @@ import { useCallback } from "react";
 
 import type { TransactionProposal } from "../components/chat/chatTypes";
 import { useChatStore } from "../stores/chatStore";
+import { useInvalidateSidebar } from "./useInvalidateSidebar";
 
 type CommitOutcome =
   | { status: "committed"; txn_id: string }
@@ -21,6 +22,7 @@ export function useCommitProposal(
   const updateMessage = useChatStore((s) => s.updateMessage);
   const removeMessage = useChatStore((s) => s.removeMessage);
   const addSystemMessage = useChatStore((s) => s.addSystemMessage);
+  const invalidateSidebar = useInvalidateSidebar();
 
   const commit = useCallback(
     async (messageId: string, proposal: TransactionProposal) => {
@@ -45,6 +47,7 @@ export function useCommitProposal(
           commit_error: undefined,
           transaction_id: outcome.txn_id,
         });
+        void invalidateSidebar();
         return;
       }
 
@@ -53,7 +56,7 @@ export function useCommitProposal(
       updateMessage(messageId, { commit_error: summary });
       addSystemMessage(summary, "error");
     },
-    [addSystemMessage, deps, updateMessage],
+    [addSystemMessage, deps, invalidateSidebar, updateMessage],
   );
 
   const discard = useCallback(

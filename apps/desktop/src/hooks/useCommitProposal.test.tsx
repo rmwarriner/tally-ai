@@ -1,9 +1,19 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
 
 import type { ChatMessage, TransactionProposal } from "../components/chat/chatTypes";
 import { useChatStore } from "../stores/chatStore";
 import { useCommitProposal } from "./useCommitProposal";
+
+function makeWrapper() {
+  const queryClient = new QueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  return { queryClient, wrapper };
+}
 
 function seedPendingMessage(id: string, proposal: TransactionProposal): void {
   const message: ChatMessage = {
@@ -44,8 +54,11 @@ describe("useCommitProposal", () => {
   it("flips the message to posted on a committed outcome", async () => {
     seedPendingMessage("msg_1", sampleProposal());
     const invoke = vi.fn(async () => ({ status: "committed", txn_id: "TXN_ABC" }));
+    const { wrapper } = makeWrapper();
 
-    const { result } = renderHook(() => useCommitProposal({ invoke: invoke as never }));
+    const { result } = renderHook(() => useCommitProposal({ invoke: invoke as never }), {
+      wrapper,
+    });
     await act(async () => {
       await result.current.commit("msg_1", sampleProposal());
     });
@@ -59,6 +72,46 @@ describe("useCommitProposal", () => {
     expect(message.transaction_id).toBe("TXN_ABC");
   });
 
+  it("invalidates the sidebar queries on successful commit", async () => {
+    seedPendingMessage("msg_1", sampleProposal());
+    const invoke = vi.fn(async () => ({ status: "committed", txn_id: "TXN_ABC" }));
+    const { queryClient, wrapper } = makeWrapper();
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { result } = renderHook(() => useCommitProposal({ invoke: invoke as never }), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.commit("msg_1", sampleProposal());
+    });
+
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["sidebar"] });
+  });
+
+  it("does not invalidate on rejection", async () => {
+    seedPendingMessage("msg_1", sampleProposal());
+    const invoke = vi.fn(async () => ({
+      status: "rejected",
+      validation: {
+        status: "REJECTED",
+        errors: [{ user_message: "bad" }],
+      },
+    }));
+    const { queryClient, wrapper } = makeWrapper();
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { result } = renderHook(() => useCommitProposal({ invoke: invoke as never }), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.commit("msg_1", sampleProposal());
+    });
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("surfaces the validation error on a rejected outcome", async () => {
     seedPendingMessage("msg_1", sampleProposal());
     const invoke = vi.fn(async () => ({
@@ -68,8 +121,11 @@ describe("useCommitProposal", () => {
         errors: [{ code: "ZERO_AMOUNT", user_message: "Amounts must be greater than zero." }],
       },
     }));
+    const { wrapper } = makeWrapper();
 
-    const { result } = renderHook(() => useCommitProposal({ invoke: invoke as never }));
+    const { result } = renderHook(() => useCommitProposal({ invoke: invoke as never }), {
+      wrapper,
+    });
     await act(async () => {
       await result.current.commit("msg_1", sampleProposal());
     });
@@ -91,8 +147,11 @@ describe("useCommitProposal", () => {
     const invoke = vi.fn(async () => {
       throw new Error("database locked");
     });
+    const { wrapper } = makeWrapper();
 
-    const { result } = renderHook(() => useCommitProposal({ invoke: invoke as never }));
+    const { result } = renderHook(() => useCommitProposal({ invoke: invoke as never }), {
+      wrapper,
+    });
     await act(async () => {
       await result.current.commit("msg_1", sampleProposal());
     });
@@ -109,7 +168,10 @@ describe("useCommitProposal", () => {
   it("discard removes the message from the store", () => {
     seedPendingMessage("msg_1", sampleProposal());
     const invoke = vi.fn();
-    const { result } = renderHook(() => useCommitProposal({ invoke: invoke as never }));
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useCommitProposal({ invoke: invoke as never }), {
+      wrapper,
+    });
 
     act(() => {
       result.current.discard("msg_1");
