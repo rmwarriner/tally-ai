@@ -30,6 +30,12 @@ impl AppState {
     }
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn db_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -49,9 +55,6 @@ fn salt_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir.join("tally.salt"))
 }
 
-fn load_salt(path: &PathBuf) -> Result<Vec<u8>, String> {
-    std::fs::read(path).map_err(|e| format!("Cannot read salt file: {e}"))
-}
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -106,7 +109,7 @@ pub async fn create_household(
 
     // Generate a fresh random 16-byte salt
     let salt: [u8; 16] = rand_salt();
-    std::fs::write(&sp, &salt).map_err(|e| format!("Cannot write salt: {e}"))?;
+    std::fs::write(&sp, salt).map_err(|e| format!("Cannot write salt: {e}"))?;
 
     let pool = create_encrypted_db(&path, &args.passphrase, &salt)
         .await
