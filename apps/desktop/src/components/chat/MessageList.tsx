@@ -2,6 +2,7 @@ import { ArtifactCard } from "../artifacts/ArtifactCard";
 import { AIMessage } from "./AIMessage";
 import { DateSeparator } from "./DateSeparator";
 import { ProactiveMessage } from "./ProactiveMessage";
+import { SystemMessage } from "./SystemMessage";
 import { TransactionCard } from "./TransactionCard";
 import { UserMessage } from "./UserMessage";
 import type { ChatMessage } from "./chatTypes";
@@ -52,6 +53,8 @@ function renderMessage(message: ChatMessage) {
           advisory_code={message.advisory_code}
         />
       );
+    case "system":
+      return <SystemMessage text={message.text} tone={message.tone} />;
     case "transaction":
       return (
         <TransactionCard
@@ -72,9 +75,13 @@ function renderMessage(message: ChatMessage) {
     case "artifact":
       return (
         <ArtifactCard title={message.title}>
-          <p className={styles.artifactPlaceholder} aria-label="Artifact card placeholder">
-            Artifact {message.artifact_id}
-          </p>
+          {message.content ? (
+            <pre className={styles.artifactContent}>{message.content}</pre>
+          ) : (
+            <p className={styles.artifactPlaceholder} aria-label="Artifact card placeholder">
+              Artifact {message.artifact_id}
+            </p>
+          )}
         </ArtifactCard>
       );
     default:

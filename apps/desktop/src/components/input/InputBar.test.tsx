@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { useUIStore } from "../../stores/uiStore";
@@ -51,6 +51,57 @@ describe("InputBar", () => {
       expect.arrayContaining([expect.stringContaining("/budget"), expect.stringContaining("/balance")]),
     );
     expect(options.some((option) => option.textContent?.includes("/recent"))).toBe(false);
+  });
+
+  it("selects highlighted slash command on Enter when palette is open", () => {
+    const onSend = vi.fn();
+    render(<InputBar onSend={onSend} isStreaming={false} />);
+
+    const textbox = screen.getByRole("textbox", { name: /chat input/i });
+    fireEvent.change(textbox, { target: { value: "/" } });
+    fireEvent.keyDown(textbox, { key: "ArrowDown" });
+    fireEvent.keyDown(textbox, { key: "Enter" });
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(textbox).toHaveValue("/balance ");
+    expect(screen.queryByRole("listbox", { name: /slash commands/i })).not.toBeInTheDocument();
+  });
+
+  it("closes palette on Escape and then clears input on second Escape", async () => {
+    render(<InputBar onSend={vi.fn()} isStreaming={false} />);
+
+    const textbox = screen.getByRole("textbox", { name: /chat input/i });
+    fireEvent.change(textbox, { target: { value: "/" } });
+    expect(screen.getByRole("listbox", { name: /slash commands/i })).toBeInTheDocument();
+
+    fireEvent.keyDown(textbox, { key: "Escape" });
+    expect(screen.queryByRole("listbox", { name: /slash commands/i })).not.toBeInTheDocument();
+    expect(textbox).toHaveValue("/");
+
+    fireEvent.keyDown(textbox, { key: "Escape" });
+    expect(textbox).toHaveValue("");
+
+    fireEvent.change(textbox, { target: { value: "/" } });
+    fireEvent.blur(textbox);
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox", { name: /slash commands/i })).not.toBeInTheDocument();
+    });
+  });
+
+  it("sends from button click and stays disabled while streaming", () => {
+    const onSend = vi.fn();
+    const { rerender } = render(<InputBar onSend={onSend} isStreaming={false} />);
+
+    const textbox = screen.getByRole("textbox", { name: /chat input/i });
+    fireEvent.change(textbox, { target: { value: "Clicked" } });
+    fireEvent.click(screen.getByRole("button", { name: /send message/i }));
+    expect(onSend).toHaveBeenCalledWith("Clicked");
+
+    rerender(<InputBar onSend={onSend} isStreaming={true} />);
+    const streamingTextbox = screen.getByRole("textbox", { name: /chat input/i });
+    const sendButton = screen.getByRole("button", { name: /send message/i });
+    expect(streamingTextbox).toBeDisabled();
+    expect(sendButton).toBeDisabled();
   });
 
   it("shows context chips from the ui store and allows removal", () => {

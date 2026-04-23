@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ChatThread } from "./components/chat/ChatThread";
 import { InputBar } from "./components/input/InputBar";
+import { useSendMessage } from "./hooks/useSendMessage";
+import { useSlashDispatch } from "./hooks/useSlashDispatch";
 import { HealthSidebar } from "./components/sidebar/HealthSidebar";
 import { useUIStore } from "./stores/uiStore";
 import styles from "./App.module.css";
@@ -11,9 +13,18 @@ export default function App() {
   const [queryClient] = useState(() => new QueryClient());
   const sidebarState = useUIStore((state) => state.sidebarState);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
-  const onSend = useCallback((_text: string) => {
-    // TODO(phase2): wire input to AI send-message pipeline.
-  }, []);
+  const sendMessage = useSendMessage();
+  const dispatchSlash = useSlashDispatch();
+  const onSend = useCallback(
+    (text: string) => {
+      if (text.startsWith("/")) {
+        void dispatchSlash(text);
+        return;
+      }
+      sendMessage(text);
+    },
+    [dispatchSlash, sendMessage],
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

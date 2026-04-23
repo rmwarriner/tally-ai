@@ -1,6 +1,7 @@
 import { type UIEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useChatHistory } from "../../hooks/useChatHistory";
+import { useChatStore } from "../../stores/chatStore";
 import { MessageList } from "./MessageList";
 import { NewMessagePill } from "./NewMessagePill";
 import styles from "./ChatThread.module.css";
@@ -20,10 +21,11 @@ export function ChatThread() {
   const [showNewMessagePill, setShowNewMessagePill] = useState(false);
 
   const { data, hasNextPage, isFetchingNextPage, fetchNextPage } = useChatHistory();
+  const localMessages = useChatStore((state) => state.localMessages);
 
   const messages = useMemo(
-    () => data?.pages.flatMap((page) => page) ?? [],
-    [data?.pages],
+    () => [...(data?.pages.flatMap((page) => page) ?? []), ...localMessages],
+    [data?.pages, localMessages],
   );
 
   const newestMessageId = messages[messages.length - 1]?.id ?? null;

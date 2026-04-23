@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatThread } from "./ChatThread";
 import type { ChatMessage } from "./chatTypes";
 import { useChatHistory } from "../../hooks/useChatHistory";
+import { useChatStore } from "../../stores/chatStore";
 
 vi.mock("../../hooks/useChatHistory", () => ({
   useChatHistory: vi.fn(),
@@ -20,6 +21,7 @@ describe("ChatThread", () => {
   beforeEach(() => {
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
     mockUseChatHistory.mockReset();
+    useChatStore.setState({ localMessages: [] });
   });
 
   it("renders user and ai messages", () => {
