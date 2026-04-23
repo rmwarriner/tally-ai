@@ -5,6 +5,7 @@ import { ChatThread } from "./components/chat/ChatThread";
 import { InputBar } from "./components/input/InputBar";
 import { useSendMessage } from "./hooks/useSendMessage";
 import { useSlashDispatch } from "./hooks/useSlashDispatch";
+import { useOnboardingEngine } from "./hooks/useOnboardingEngine";
 import { HealthSidebar } from "./components/sidebar/HealthSidebar";
 import { useUIStore } from "./stores/uiStore";
 import styles from "./App.module.css";
@@ -15,15 +16,21 @@ export default function App() {
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
   const sendMessage = useSendMessage();
   const dispatchSlash = useSlashDispatch();
+  const onboarding = useOnboardingEngine();
+
   const onSend = useCallback(
     (text: string) => {
+      if (onboarding.isActive) {
+        void onboarding.handleInput(text);
+        return;
+      }
       if (text.startsWith("/")) {
         void dispatchSlash(text);
         return;
       }
       sendMessage(text);
     },
-    [dispatchSlash, sendMessage],
+    [onboarding, dispatchSlash, sendMessage],
   );
 
   useEffect(() => {
@@ -45,7 +52,7 @@ export default function App() {
       <div id="app-shell" className={styles.shell}>
         <HealthSidebar state={sidebarState} onToggle={toggleSidebar} />
         <main className={styles.main}>
-          <ChatThread />
+          <ChatThread onPromptClick={onSend} />
           <InputBar onSend={onSend} isStreaming={false} />
         </main>
       </div>

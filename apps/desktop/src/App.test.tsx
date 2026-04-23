@@ -2,12 +2,20 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// Mock Tauri so the onboarding engine doesn't make real IPC calls in tests
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn().mockResolvedValue(true),
+}));
+
 import App from "./App";
 import { useChatStore } from "./stores/chatStore";
+import { useOnboardingStore, getOnboardingInitialState } from "./stores/onboardingStore";
 
 describe("App", () => {
   beforeEach(() => {
     useChatStore.setState({ localMessages: [] });
+    // Bypass onboarding so input routing behaves normally
+    useOnboardingStore.setState({ ...getOnboardingInitialState(), phase: "complete" });
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
   });
 

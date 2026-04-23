@@ -1,4 +1,6 @@
 import { ArtifactCard } from "../artifacts/ArtifactCard";
+import { HandoffMessage } from "../onboarding/HandoffMessage";
+import { SetupCard } from "../onboarding/SetupCard";
 import { AIMessage } from "./AIMessage";
 import { DateSeparator } from "./DateSeparator";
 import { ProactiveMessage } from "./ProactiveMessage";
@@ -10,6 +12,7 @@ import styles from "./MessageList.module.css";
 
 interface MessageListProps {
   messages: ChatMessage[];
+  onPromptClick?: (prompt: string) => void;
 }
 
 function toLocalDateKey(ts: number): string {
@@ -38,7 +41,7 @@ function formatDateLabel(ts: number, now: Date): string {
   }).format(messageDate);
 }
 
-function renderMessage(message: ChatMessage) {
+function renderMessage(message: ChatMessage, onPromptClick?: (prompt: string) => void) {
   switch (message.kind) {
     case "user":
       return <UserMessage text={message.text} />;
@@ -84,12 +87,26 @@ function renderMessage(message: ChatMessage) {
           )}
         </ArtifactCard>
       );
+    case "setup_card":
+      return (
+        <SetupCard variant={message.variant} title={message.title} detail={message.detail} />
+      );
+    case "handoff":
+      return (
+        <HandoffMessage
+          householdName={message.householdName}
+          accountCount={message.accountCount}
+          envelopeCount={message.envelopeCount}
+          starterPrompts={message.starterPrompts}
+          onPromptClick={onPromptClick ?? (() => undefined)}
+        />
+      );
     default:
       return null;
   }
 }
 
-export function MessageList({ messages }: MessageListProps) {
+export function MessageList({ messages, onPromptClick }: MessageListProps) {
   const sorted = [...messages].sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id));
   const now = new Date();
 
@@ -105,7 +122,7 @@ export function MessageList({ messages }: MessageListProps) {
         return (
           <div key={message.id} className={styles.messageBlock}>
             {showSeparator ? <DateSeparator label={formatDateLabel(message.ts, now)} /> : null}
-            {renderMessage(message)}
+            {renderMessage(message, onPromptClick)}
           </div>
         );
       })}

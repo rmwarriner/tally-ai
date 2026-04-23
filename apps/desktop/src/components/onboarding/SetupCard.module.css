@@ -1,0 +1,57 @@
+.card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: var(--color-surface, #f8fafc);
+  max-width: 400px;
+}
+
+.icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text, #1e293b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail {
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #64748b);
+}
+
+.household_created {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.account_created {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.opening_balance {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.envelope_created {
+  border-color: #e9d5ff;
+  background: #faf5ff;
+}

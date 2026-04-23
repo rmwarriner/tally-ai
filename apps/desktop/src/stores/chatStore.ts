@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import type { ChatMessage } from "../components/chat/chatTypes";
+import type { SetupCardVariant } from "../components/onboarding/SetupCard";
 import { generateUlid } from "../utils/ulid";
 
 interface ChatStore {
@@ -9,6 +10,13 @@ interface ChatStore {
   addUserMessage: (text: string) => void;
   addSystemMessage: (text: string, tone?: "info" | "error") => void;
   addArtifactMessage: (title: string, content: string) => void;
+  addSetupCard: (variant: SetupCardVariant, title: string, detail: string) => void;
+  addHandoffMessage: (
+    householdName: string,
+    accountCount: number,
+    envelopeCount: number,
+    starterPrompts: string[],
+  ) => void;
 }
 
 function makeBaseMessage<K extends ChatMessage["kind"]>(kind: K): { kind: K; id: string; ts: number } {
@@ -46,6 +54,25 @@ export const useChatStore = create<ChatStore>((set) => ({
       artifact_id: id,
       title,
       content,
+    };
+    set((state) => ({ localMessages: [...state.localMessages, message] }));
+  },
+  addSetupCard: (variant, title, detail) => {
+    const message: ChatMessage = {
+      ...makeBaseMessage("setup_card"),
+      variant,
+      title,
+      detail,
+    };
+    set((state) => ({ localMessages: [...state.localMessages, message] }));
+  },
+  addHandoffMessage: (householdName, accountCount, envelopeCount, starterPrompts) => {
+    const message: ChatMessage = {
+      ...makeBaseMessage("handoff"),
+      householdName,
+      accountCount,
+      envelopeCount,
+      starterPrompts,
     };
     set((state) => ({ localMessages: [...state.localMessages, message] }));
   },

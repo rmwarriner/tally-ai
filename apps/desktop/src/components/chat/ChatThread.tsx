@@ -12,7 +12,11 @@ function isNearBottom(element: HTMLDivElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight < NEAR_BOTTOM_THRESHOLD;
 }
 
-export function ChatThread() {
+interface ChatThreadProps {
+  onPromptClick?: (prompt: string) => void;
+}
+
+export function ChatThread({ onPromptClick }: ChatThreadProps = {}) {
   const threadRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const previousNewestMessageIdRef = useRef<string | null>(null);
@@ -124,7 +128,7 @@ export function ChatThread() {
         ) : null}
 
         {messages.length > 0 ? (
-          <MessageList messages={messages} />
+          <MessageList messages={messages} onPromptClick={onPromptClick} />
         ) : (
           <p className={styles.placeholder}>No messages yet.</p>
         )}
