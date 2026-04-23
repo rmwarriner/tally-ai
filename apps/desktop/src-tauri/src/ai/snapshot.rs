@@ -1,42 +1,24 @@
 // Financial snapshot builder — T-023
-// Queries posted balances and current-period envelope health.
-// Scheduled transactions are Phase 2; see TODO(phase2) below.
+// Delegates balance and envelope queries to core::read (single source of
+// truth for balance math). Scheduled transactions are Phase 2.
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AccountBalance {
-    pub account_id: String,
-    pub account_name: String,
-    pub account_type: String,
-    /// Signed balance in cents: positive = normal balance direction.
-    pub balance_cents: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnvelopeHealth {
-    pub envelope_id: String,
-    pub envelope_name: String,
-    pub allocated_cents: i64,
-    pub spent_cents: i64,
-    pub remaining_cents: i64,
-    /// UTC ms of period end.
-    pub period_end_ms: i64,
-}
+use crate::core::read::{
+    account_balances as read_balances, current_envelope_periods as read_envelopes,
+    AccountBalance, EnvelopeStatus,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinancialSnapshot {
     pub household_id: String,
-    /// Unix ms at which the snapshot was taken.
     pub as_of_ms: i64,
     pub balances: Vec<AccountBalance>,
-    pub envelopes: Vec<EnvelopeHealth>,
-    // TODO(phase2): scheduled: Vec<ScheduledTransaction>
+    pub envelopes: Vec<EnvelopeStatus>,
 }
 
 impl FinancialSnapshot {
-    /// Formats the snapshot as a concise prompt string for the SNAPSHOT layer.
     pub fn to_prompt_text(&self) -> String {
         let mut out = String::from("=== Financial Snapshot ===\n");
 
@@ -48,7 +30,7 @@ impl FinancialSnapshot {
                 if b.balance_cents != 0 {
                     out.push_str(&format!(
                         "  {} ({}): {}\n",
-                        b.account_name,
+                        b.name,
                         b.account_type,
                         format_dollars(b.balance_cents)
                     ));
@@ -64,13 +46,14 @@ impl FinancialSnapshot {
                 } else {
                     0
                 };
+                let remaining = e.allocated_cents - e.spent_cents;
                 out.push_str(&format!(
                     "  {}: {}/{} ({}% used, {} remaining)\n",
-                    e.envelope_name,
+                    e.name,
                     format_dollars(e.spent_cents),
                     format_dollars(e.allocated_cents),
                     pct,
-                    format_dollars(e.remaining_cents)
+                    format_dollars(remaining)
                 ));
             }
         }
@@ -78,10 +61,6 @@ impl FinancialSnapshot {
         out
     }
 
-    /// Prompt-ready snapshot that exposes every account's ULID and name,
-    /// including zero-balance accounts. Claude uses this to pick valid
-    /// `account_id`s for proposals — `to_prompt_text` alone would hide
-    /// freshly-created accounts with no activity yet.
     pub fn to_prompt_text_with_ids(&self) -> String {
         let mut out = String::from("=== Financial Snapshot ===\n");
 
@@ -92,8 +71,8 @@ impl FinancialSnapshot {
             for b in &self.balances {
                 out.push_str(&format!(
                     "  {} • {} • {} • {}\n",
-                    b.account_id,
-                    b.account_name,
+                    b.id,
+                    b.name,
                     b.account_type,
                     format_dollars(b.balance_cents)
                 ));
@@ -103,13 +82,14 @@ impl FinancialSnapshot {
         if !self.envelopes.is_empty() {
             out.push_str("\nEnvelopes (id • name • spent/allocated • remaining)\n");
             for e in &self.envelopes {
+                let remaining = e.allocated_cents - e.spent_cents;
                 out.push_str(&format!(
                     "  {} • {} • {}/{} • {}\n",
                     e.envelope_id,
-                    e.envelope_name,
+                    e.name,
                     format_dollars(e.spent_cents),
                     format_dollars(e.allocated_cents),
-                    format_dollars(e.remaining_cents),
+                    format_dollars(remaining),
                 ));
             }
         }
@@ -123,112 +103,14 @@ pub async fn build_snapshot(
     household_id: &str,
     as_of_ms: i64,
 ) -> Result<FinancialSnapshot, sqlx::Error> {
-    let balances = query_balances(pool, household_id).await?;
-    let envelopes = query_envelopes(pool, household_id, as_of_ms).await?;
-    Ok(FinancialSnapshot { household_id: household_id.to_string(), as_of_ms, balances, envelopes })
-}
-
-#[derive(sqlx::FromRow)]
-struct BalanceRow {
-    id: String,
-    name: String,
-    account_type: String,
-    normal_balance: String,
-    debit_total: i64,
-    credit_total: i64,
-}
-
-async fn query_balances(
-    pool: &SqlitePool,
-    household_id: &str,
-) -> Result<Vec<AccountBalance>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, BalanceRow>(
-        r#"
-        SELECT
-            a.id,
-            a.name,
-            a.type       AS account_type,
-            a.normal_balance,
-            COALESCE(SUM(CASE WHEN jl.side = 'debit'  AND t.status = 'posted' THEN jl.amount ELSE 0 END), 0) AS debit_total,
-            COALESCE(SUM(CASE WHEN jl.side = 'credit' AND t.status = 'posted' THEN jl.amount ELSE 0 END), 0) AS credit_total
-        FROM accounts a
-        LEFT JOIN journal_lines jl ON jl.account_id = a.id
-        LEFT JOIN transactions  t  ON t.id = jl.transaction_id
-        WHERE a.household_id = ?
-          AND a.is_placeholder = 0
-        GROUP BY a.id
-        ORDER BY a.type, a.name
-        "#,
-    )
-    .bind(household_id)
-    .fetch_all(pool)
-    .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| {
-            let balance_cents = if r.normal_balance == "debit" {
-                r.debit_total - r.credit_total
-            } else {
-                r.credit_total - r.debit_total
-            };
-            AccountBalance {
-                account_id: r.id,
-                account_name: r.name,
-                account_type: r.account_type,
-                balance_cents,
-            }
-        })
-        .collect())
-}
-
-#[derive(sqlx::FromRow)]
-struct EnvelopeRow {
-    envelope_id: String,
-    envelope_name: String,
-    allocated: i64,
-    spent: i64,
-    period_end: i64,
-}
-
-async fn query_envelopes(
-    pool: &SqlitePool,
-    household_id: &str,
-    as_of_ms: i64,
-) -> Result<Vec<EnvelopeHealth>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, EnvelopeRow>(
-        r#"
-        SELECT
-            e.id    AS envelope_id,
-            e.name  AS envelope_name,
-            ep.allocated,
-            ep.spent,
-            ep.period_end
-        FROM envelopes e
-        JOIN envelope_periods ep ON ep.envelope_id = e.id
-        WHERE e.household_id = ?
-          AND ep.period_start <= ?
-          AND ep.period_end   >= ?
-        ORDER BY e.name
-        "#,
-    )
-    .bind(household_id)
-    .bind(as_of_ms)
-    .bind(as_of_ms)
-    .fetch_all(pool)
-    .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| EnvelopeHealth {
-            envelope_id: r.envelope_id,
-            envelope_name: r.envelope_name,
-            allocated_cents: r.allocated,
-            spent_cents: r.spent,
-            remaining_cents: r.allocated - r.spent,
-            period_end_ms: r.period_end,
-        })
-        .collect())
+    let balances = read_balances(pool, household_id).await?;
+    let envelopes = read_envelopes(pool, household_id, as_of_ms).await?;
+    Ok(FinancialSnapshot {
+        household_id: household_id.to_string(),
+        as_of_ms,
+        balances,
+        envelopes,
+    })
 }
 
 fn format_dollars(cents: i64) -> String {
@@ -334,7 +216,7 @@ mod tests {
         insert_line(&pool, &tid, &equity, 10_000, "credit").await;
 
         let snap = build_snapshot(&pool, &hid, 0).await.unwrap();
-        let checking_bal = snap.balances.iter().find(|b| b.account_name == "Checking").unwrap();
+        let checking_bal = snap.balances.iter().find(|b| b.name == "Checking").unwrap();
         assert_eq!(checking_bal.balance_cents, 10_000);
     }
 
@@ -359,7 +241,7 @@ mod tests {
         insert_line(&pool, &tid, &equity, 50_000, "credit").await;
 
         let snap = build_snapshot(&pool, &hid, 0).await.unwrap();
-        let bal = snap.balances.iter().find(|b| b.account_name == "Checking").unwrap();
+        let bal = snap.balances.iter().find(|b| b.name == "Checking").unwrap();
         assert_eq!(bal.balance_cents, 0);
     }
 
@@ -396,7 +278,6 @@ mod tests {
         assert_eq!(snap.envelopes.len(), 1);
         assert_eq!(snap.envelopes[0].allocated_cents, 50000);
         assert_eq!(snap.envelopes[0].spent_cents, 20000);
-        assert_eq!(snap.envelopes[0].remaining_cents, 30000);
     }
 
     #[test]
@@ -405,8 +286,8 @@ mod tests {
             household_id: "hid".to_string(),
             as_of_ms: 0,
             balances: vec![AccountBalance {
-                account_id: "a1".to_string(),
-                account_name: "Checking".to_string(),
+                id: "a1".to_string(),
+                name: "Checking".to_string(),
                 account_type: "asset".to_string(),
                 balance_cents: 123_456,
             }],
@@ -423,8 +304,8 @@ mod tests {
             household_id: "hid".to_string(),
             as_of_ms: 0,
             balances: vec![AccountBalance {
-                account_id: "a1".to_string(),
-                account_name: "Empty".to_string(),
+                id: "a1".to_string(),
+                name: "Empty".to_string(),
                 account_type: "asset".to_string(),
                 balance_cents: 0,
             }],
@@ -441,14 +322,14 @@ mod tests {
             as_of_ms: 0,
             balances: vec![
                 AccountBalance {
-                    account_id: "acc_chk".to_string(),
-                    account_name: "Checking".to_string(),
+                    id: "acc_chk".to_string(),
+                    name: "Checking".to_string(),
                     account_type: "asset".to_string(),
                     balance_cents: 10000,
                 },
                 AccountBalance {
-                    account_id: "acc_grc".to_string(),
-                    account_name: "Groceries".to_string(),
+                    id: "acc_grc".to_string(),
+                    name: "Groceries".to_string(),
                     account_type: "expense".to_string(),
                     balance_cents: 0,
                 },
