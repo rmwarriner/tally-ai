@@ -2,9 +2,18 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock Tauri so the onboarding engine doesn't make real IPC calls in tests
+// Mock Tauri so the onboarding engine doesn't make real IPC calls in tests.
+// The mock dispatches by command name so each test gets a shape the caller expects.
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn().mockResolvedValue(true),
+  invoke: vi.fn(async (cmd: string) => {
+    if (cmd === "submit_message") {
+      return { kind: "text", text: "ok" };
+    }
+    if (cmd === "list_chat_messages") {
+      return [];
+    }
+    return true;
+  }),
 }));
 
 import App from "./App";

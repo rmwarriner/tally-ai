@@ -21,4 +21,9 @@ export interface TransactionCardProps {
   transaction: TransactionDisplay;
   replacement?: TransactionDisplay;
   onSendMessage?: (message: string) => void;
+  /// Confirm/discard callbacks are only passed for fresh AI proposals.
+  onConfirm?: () => void;
+  onDiscard?: () => void;
+  isCommitting?: boolean;
+  commitError?: string;
 }

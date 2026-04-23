@@ -1,6 +1,7 @@
 pub mod adapter;
 pub mod advisories;
 pub mod classifier;
+pub mod orchestrator;
 pub mod parser;
 pub mod payee_memory;
 pub mod prompt;

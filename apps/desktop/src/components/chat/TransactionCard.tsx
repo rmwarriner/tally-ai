@@ -4,10 +4,28 @@ import { TransactionCardPosted } from "./TransactionCardPosted";
 import type { TransactionCardProps } from "./TransactionCard.types";
 import { TransactionCardVoided } from "./TransactionCardVoided";
 
-export function TransactionCard({ state, transaction, replacement, onSendMessage }: TransactionCardProps) {
+export function TransactionCard({
+  state,
+  transaction,
+  replacement,
+  onSendMessage,
+  onConfirm,
+  onDiscard,
+  isCommitting,
+  commitError,
+}: TransactionCardProps) {
   switch (state) {
     case "pending":
-      return <TransactionCardPending transaction={transaction} onSendMessage={onSendMessage} />;
+      return (
+        <TransactionCardPending
+          transaction={transaction}
+          onSendMessage={onSendMessage}
+          onConfirm={onConfirm}
+          onDiscard={onDiscard}
+          isCommitting={isCommitting}
+          commitError={commitError}
+        />
+      );
     case "voided":
       return <TransactionCardVoided transaction={transaction} />;
     case "correction_pair":

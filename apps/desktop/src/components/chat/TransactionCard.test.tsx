@@ -50,6 +50,58 @@ describe("TransactionCard", () => {
     expect(onSendMessage).toHaveBeenCalledWith("/fix post 01HV");
   });
 
+  it("shows Confirm and Discard buttons when proposal callbacks are provided", () => {
+    const onConfirm = vi.fn();
+    const onDiscard = vi.fn();
+    render(
+      <TransactionCard
+        state="pending"
+        transaction={makeTransaction()}
+        onConfirm={onConfirm}
+        onDiscard={onDiscard}
+      />,
+    );
+
+    expect(screen.getByText(/proposed/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /post now/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /discard/i }));
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables proposal buttons while committing and shows a saving label", () => {
+    render(
+      <TransactionCard
+        state="pending"
+        transaction={makeTransaction()}
+        onConfirm={() => undefined}
+        onDiscard={() => undefined}
+        isCommitting
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /saving/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /discard/i })).toBeDisabled();
+  });
+
+  it("renders commitError as an alert above the actions", () => {
+    render(
+      <TransactionCard
+        state="pending"
+        transaction={makeTransaction()}
+        onConfirm={() => undefined}
+        onDiscard={() => undefined}
+        commitError="Account balance would go negative."
+      />,
+    );
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Account balance would go negative.");
+  });
+
   it("renders voided card with strikethrough payee and amount", () => {
     render(<TransactionCard state="voided" transaction={makeTransaction()} />);
 

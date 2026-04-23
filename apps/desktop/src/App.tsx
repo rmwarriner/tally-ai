@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ChatThread } from "./components/chat/ChatThread";
 import { InputBar } from "./components/input/InputBar";
+import { useChatPersistence } from "./hooks/useChatPersistence";
 import { useSendMessage } from "./hooks/useSendMessage";
 import { useSlashDispatch } from "./hooks/useSlashDispatch";
 import { useOnboardingEngine } from "./hooks/useOnboardingEngine";
@@ -17,6 +18,7 @@ export default function App() {
   const sendMessage = useSendMessage();
   const dispatchSlash = useSlashDispatch();
   const onboarding = useOnboardingEngine();
+  useChatPersistence();
 
   const onSend = useCallback(
     (text: string) => {

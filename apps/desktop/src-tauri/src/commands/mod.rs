@@ -4,15 +4,25 @@
 // or unlocked. Commands that require a DB connection read from that state.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Manager, State};
 
+use crate::ai::adapter::claude::ClaudeAdapter;
+use crate::ai::orchestrator::{MessageResponse, Orchestrator};
+use crate::chat::{ChatMessageRow, ChatRepo};
 use crate::core::coa::seed_chart_of_accounts;
+use crate::core::ledger::{commit_proposal as ledger_commit, LedgerError};
+use crate::core::proposal::TransactionProposal;
+use crate::core::validation::ValidationResult;
 use crate::db::create_encrypted_db;
 use crate::id::new_ulid;
+use crate::secrets::{
+    delete_claude_api_key, has_claude_api_key, load_claude_api_key, save_claude_api_key,
+    KeyringStore,
+};
 
 // ── App state ────────────────────────────────────────────────────────────────
 
@@ -430,6 +440,177 @@ pub async fn undo_last_transaction(state: State<'_, AppState>) -> Result<(), Str
     }
     // TODO(phase2): implement full GAAP reversal via core::correction
     Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct AppendChatMessageArgs {
+    pub id: String,
+    pub kind: String,
+    pub payload: String,
+    pub ts: i64,
+}
+
+/// Persists one chat message to the thread history.
+/// The client owns the ULID and the JSON payload; this command is a thin
+/// append. Returns nothing — the UI renders optimistically and calls this
+/// for durability, not for an echo.
+#[tauri::command]
+pub async fn append_chat_message(
+    state: State<'_, AppState>,
+    args: AppendChatMessageArgs,
+) -> Result<(), String> {
+    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or("Household not set")?;
+
+    ChatRepo::new(pool)
+        .append(&household_id, &args.id, &args.kind, &args.payload, args.ts, now_ms())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Deserialize)]
+pub struct ListChatMessagesArgs {
+    pub before_ts: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+/// Returns up to `limit` messages with ts < `before_ts`, newest first.
+/// Defaults: `before_ts = i64::MAX` (the tail), `limit = 50`.
+#[tauri::command]
+pub async fn list_chat_messages(
+    state: State<'_, AppState>,
+    args: ListChatMessagesArgs,
+) -> Result<Vec<ChatMessageRow>, String> {
+    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or("Household not set")?;
+
+    let before_ts = args.before_ts.unwrap_or(i64::MAX);
+    let limit = args.limit.unwrap_or(50).clamp(1, 500);
+
+    ChatRepo::new(pool)
+        .list_before(&household_id, before_ts, limit)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ── Chat turn orchestration ───────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SubmitMessageArgs {
+    pub text: String,
+}
+
+/// Processes one user chat turn and returns a structured response the UI can
+/// render. For transaction intents this round-trips through Claude and returns
+/// a `Proposal` variant; for balance queries it's answered from the snapshot.
+#[tauri::command]
+pub async fn submit_message(
+    state: State<'_, AppState>,
+    args: SubmitMessageArgs,
+) -> Result<MessageResponse, String> {
+    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or("Household not set")?;
+
+    let api_key = load_claude_api_key(&KeyringStore::new())
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| {
+            "No Claude API key configured. Paste your key into chat when prompted, \
+             or set CLAUDE_API_KEY for development."
+                .to_string()
+        })?;
+
+    let adapter = Arc::new(ClaudeAdapter::new(api_key));
+    let orchestrator = Orchestrator::new(pool, adapter);
+
+    orchestrator
+        .handle(&household_id, args.text.trim())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Deserialize)]
+pub struct CommitProposalArgs {
+    pub proposal: TransactionProposal,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CommitOutcome {
+    Committed { txn_id: String },
+    /// Validation rejected the proposal. The UI surfaces the errors from `validation`.
+    Rejected { validation: ValidationResult },
+}
+
+/// Validates the proposal and, if accepted, writes transaction + journal_lines.
+/// Rejections return a `Rejected` outcome so the UI can render the error tier
+/// without throwing. Database failures surface as an Err.
+#[tauri::command]
+pub async fn commit_proposal(
+    state: State<'_, AppState>,
+    args: CommitProposalArgs,
+) -> Result<CommitOutcome, String> {
+    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or("Household not set")?;
+
+    match ledger_commit(&pool, &household_id, &args.proposal).await {
+        Ok(txn_id) => Ok(CommitOutcome::Committed { txn_id }),
+        Err(LedgerError::ValidationFailed(result)) => {
+            Ok(CommitOutcome::Rejected { validation: result })
+        }
+        Err(LedgerError::Database(e)) => Err(e.to_string()),
+        Err(LedgerError::OpeningBalanceExists) => {
+            Err("Opening balance already exists for this account".to_string())
+        }
+    }
+}
+
+// ── Secret management (Claude API key) ────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SetApiKeyArgs {
+    pub key: String,
+}
+
+/// Saves the Claude API key to the OS keychain.
+#[tauri::command]
+pub async fn set_api_key(args: SetApiKeyArgs) -> Result<(), String> {
+    let trimmed = args.key.trim();
+    if trimmed.is_empty() {
+        return Err("API key cannot be empty".to_string());
+    }
+    save_claude_api_key(&KeyringStore::new(), trimmed).map_err(|e| e.to_string())
+}
+
+/// Returns true if an API key is configured (env var or keychain).
+#[tauri::command]
+pub async fn has_api_key() -> Result<bool, String> {
+    has_claude_api_key(&KeyringStore::new()).map_err(|e| e.to_string())
+}
+
+/// Removes the Claude API key from the keychain. Env var (if set) is untouched.
+#[tauri::command]
+pub async fn delete_api_key() -> Result<(), String> {
+    delete_claude_api_key(&KeyringStore::new()).map_err(|e| e.to_string())
 }
 
 // ── Deterministic salt generation (simple, uses OS random) ────────────────────

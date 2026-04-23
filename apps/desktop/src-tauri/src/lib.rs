@@ -4,7 +4,9 @@ pub mod crypto;
 pub mod db;
 pub mod id;
 pub mod ai;
+pub mod chat;
 pub mod scheduler;
+pub mod secrets;
 pub mod error;
 
 use commands::AppState;
@@ -22,6 +24,13 @@ pub fn run() {
             commands::import_hledger,
             commands::get_ai_defaults,
             commands::undo_last_transaction,
+            commands::append_chat_message,
+            commands::list_chat_messages,
+            commands::set_api_key,
+            commands::has_api_key,
+            commands::delete_api_key,
+            commands::submit_message,
+            commands::commit_proposal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

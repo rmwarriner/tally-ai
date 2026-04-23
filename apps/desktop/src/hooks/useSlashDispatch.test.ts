@@ -101,6 +101,9 @@ describe("useSlashDispatch", () => {
   });
 
   it("routes /budget through sendMessage path", async () => {
+    // The real useSendMessage invokes submit_message — return a valid text response
+    // so the async tail of sendMessage resolves cleanly.
+    vi.mocked(invoke).mockResolvedValue({ kind: "text", text: "ok" });
     const { result } = renderHook(() => useSlashDispatch());
 
     await act(async () => {
