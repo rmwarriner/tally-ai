@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useOnboardingStore } from "./onboardingStore";
+import { useOnboardingStore, getOnboardingInitialState } from "./onboardingStore";
 
 beforeEach(() => {
-  useOnboardingStore.setState(useOnboardingStore.getInitialState());
+  useOnboardingStore.setState(getOnboardingInitialState());
 });
 
 describe("phase transitions", () => {

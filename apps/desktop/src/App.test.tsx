@@ -9,13 +9,13 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import App from "./App";
 import { useChatStore } from "./stores/chatStore";
-import { useOnboardingStore } from "./stores/onboardingStore";
+import { useOnboardingStore, getOnboardingInitialState } from "./stores/onboardingStore";
 
 describe("App", () => {
   beforeEach(() => {
     useChatStore.setState({ localMessages: [] });
     // Bypass onboarding so input routing behaves normally
-    useOnboardingStore.setState({ ...useOnboardingStore.getInitialState(), phase: "complete" });
+    useOnboardingStore.setState({ ...getOnboardingInitialState(), phase: "complete" });
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
   });
 

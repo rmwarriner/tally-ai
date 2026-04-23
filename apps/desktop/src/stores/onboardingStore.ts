@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
-import type { AccountType } from "@tally/core-types";
+// Inline subset of AccountType to avoid pulling in the workspace package
+type AccountType = "asset" | "liability" | "income" | "expense" | "equity";
 
 export type OnboardingPhase = "checking" | "path_select" | "fresh_start" | "migration" | "complete";
 
@@ -100,5 +101,5 @@ export const useOnboardingStore = create<OnboardingStore>((set) => ({
     set((s) => ({ currentAccountIndex: s.currentAccountIndex + 1 })),
 }));
 
-// Expose initial state for test resets
-useOnboardingStore.getInitialState = makeInitialState;
+// Exported for test resets
+export { makeInitialState as getOnboardingInitialState };
