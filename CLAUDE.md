@@ -3,7 +3,7 @@
 ## Project identity
 
 Tally.ai is a conversational household finance app built with Tauri 2 (Rust backend),
-React/TypeScript frontend, and Claude AI. The user interacts exclusively through
+React/TypeScript frontend, and Codex AI. The user interacts exclusively through
 a chat interface. There are no forms and no edit screens — all writes go through chat.
 
 ## Non-negotiable architectural rules
@@ -64,7 +64,7 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 ## AI orchestration
 
-- Claude API: always use tool use for TransactionProposal output.
+- Codex API: always use tool use for TransactionProposal output.
 
 - Never parse free-form text to extract transaction data.
 
@@ -78,10 +78,38 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 - Desktop only (Tauri). No mobile, no sync, no multi-user.
 
-- Claude backend only. No GPT, Gemini, or Ollama yet.
+- Codex backend only. No GPT, Gemini, or Ollama yet.
 
 - Manual entry only. No SimpleFIN, no file import, no folder watch.
 
 - No scheduled/recurring transactions yet.
 
 - Stub Phase 2 extension points with clear TODO(phase2) comments.
+
+## UI implementation status (as of 2026-04-23)
+
+- Chat thread foundation is implemented:
+  message rendering by type, date separators, auto-scroll behavior, new-message pill,
+  and infinite history loading.
+
+- Transaction cards are implemented for:
+  posted, pending, voided, and correction pair states (with journal line drawer).
+
+- Artifact cards are implemented:
+  framed inline panel, Copy action, disabled Expand affordance, LedgerTable,
+  and BalanceReport renderers.
+
+- Proactive advisory message variant is implemented:
+  amber avatar, caution accent styling, and optional advisory code pill.
+
+- InfoCircle/Tooltip shared affordance primitives are implemented in `src/components/ui/`
+  and should be used for non-obvious interactive affordances.
+
+- Input bar is implemented:
+  auto-growing textarea, context chip strip from Zustand store, send button,
+  and slash command palette with keyboard navigation/filtering.
+
+- Slash command routing is implemented in `useSlashDispatch`:
+  `/budget`, `/balance`, `/recent`, `/fix` route through send-message flow;
+  `/undo`, `/help`, `/defaults`, and unknown commands are handled locally via
+  system/artifact insertion.
