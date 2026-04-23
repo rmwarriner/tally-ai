@@ -595,3 +595,59 @@ fn rand_salt() -> [u8; 16] {
     salt[8..].copy_from_slice(&h2.to_le_bytes());
     salt
 }
+
+// ── Sidebar read queries (T-048) ──────────────────────────────────────────────
+
+use crate::core::read::{
+    account_balances as read_balances, coming_up_transactions as read_coming_up,
+    current_envelope_periods as read_envelopes, AccountBalance, ComingUpTxn, EnvelopeStatus,
+};
+
+#[tauri::command]
+pub async fn get_account_balances(
+    state: State<'_, AppState>,
+) -> Result<Vec<AccountBalance>, String> {
+    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or("Household not set")?;
+
+    read_balances(&pool, &household_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_current_envelope_periods(
+    state: State<'_, AppState>,
+) -> Result<Vec<EnvelopeStatus>, String> {
+    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or("Household not set")?;
+
+    read_envelopes(&pool, &household_id, now_ms())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_pending_transactions(
+    state: State<'_, AppState>,
+) -> Result<Vec<ComingUpTxn>, String> {
+    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or("Household not set")?;
+
+    read_coming_up(&pool, &household_id, now_ms(), 50)
+        .await
+        .map_err(|e| e.to_string())
+}
