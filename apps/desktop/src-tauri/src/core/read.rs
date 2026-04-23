@@ -89,6 +89,55 @@ pub async fn account_balances(
         .collect())
 }
 
+#[derive(sqlx::FromRow)]
+struct EnvelopeRow {
+    envelope_id: String,
+    name: String,
+    allocated: i64,
+    spent: i64,
+}
+
+/// Returns every envelope in the household paired with its allocated/spent
+/// for the period containing `as_of_ms`. LEFT JOIN: envelopes with no matching
+/// period appear with zeros rather than being dropped.
+pub async fn current_envelope_periods(
+    pool: &SqlitePool,
+    household_id: &str,
+    as_of_ms: i64,
+) -> Result<Vec<EnvelopeStatus>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, EnvelopeRow>(
+        r#"
+        SELECT
+            e.id   AS envelope_id,
+            e.name AS name,
+            COALESCE(ep.allocated, 0) AS allocated,
+            COALESCE(ep.spent, 0)     AS spent
+        FROM envelopes e
+        LEFT JOIN envelope_periods ep
+          ON ep.envelope_id = e.id
+         AND ep.period_start <= ?
+         AND ep.period_end   >= ?
+        WHERE e.household_id = ?
+        ORDER BY e.name
+        "#,
+    )
+    .bind(as_of_ms)
+    .bind(as_of_ms)
+    .bind(household_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| EnvelopeStatus {
+            envelope_id: r.envelope_id,
+            name: r.name,
+            allocated_cents: r.allocated,
+            spent_cents: r.spent,
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,5 +294,103 @@ mod tests {
         let balances = account_balances(&pool, &hid).await.unwrap();
         let visa = balances.iter().find(|b| b.name == "Visa").unwrap();
         assert_eq!(visa.balance_cents, 2_500);
+    }
+
+    async fn insert_envelope(pool: &SqlitePool, hid: &str, acct_id: &str, name: &str) -> String {
+        let id = new_ulid();
+        sqlx::query(
+            "INSERT INTO envelopes (id, household_id, account_id, name, created_at)
+             VALUES (?, ?, ?, ?, 0)",
+        )
+        .bind(&id)
+        .bind(hid)
+        .bind(acct_id)
+        .bind(name)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn insert_period(
+        pool: &SqlitePool,
+        envelope_id: &str,
+        start: i64,
+        end: i64,
+        allocated: i64,
+        spent: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO envelope_periods
+               (id, envelope_id, period_start, period_end, allocated, spent, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, 0)",
+        )
+        .bind(new_ulid())
+        .bind(envelope_id)
+        .bind(start)
+        .bind(end)
+        .bind(allocated)
+        .bind(spent)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn envelopes_returns_zeros_when_no_current_period() {
+        let (pool, hid) = setup().await;
+        let groceries = insert_account(&pool, &hid, "Groceries", "expense", "debit", false).await;
+        insert_envelope(&pool, &hid, &groceries, "Groceries").await;
+
+        let envelopes = current_envelope_periods(&pool, &hid, 1_000).await.unwrap();
+        assert_eq!(envelopes.len(), 1);
+        assert_eq!(envelopes[0].name, "Groceries");
+        assert_eq!(envelopes[0].allocated_cents, 0);
+        assert_eq!(envelopes[0].spent_cents, 0);
+    }
+
+    #[tokio::test]
+    async fn envelopes_returns_matching_period() {
+        let (pool, hid) = setup().await;
+        let acct = insert_account(&pool, &hid, "Groceries", "expense", "debit", false).await;
+        let env = insert_envelope(&pool, &hid, &acct, "Groceries").await;
+        insert_period(&pool, &env, 0, 9_999_999_999_999, 50_000, 20_000).await;
+
+        let envelopes = current_envelope_periods(&pool, &hid, 1_000).await.unwrap();
+        assert_eq!(envelopes[0].allocated_cents, 50_000);
+        assert_eq!(envelopes[0].spent_cents, 20_000);
+    }
+
+    #[tokio::test]
+    async fn envelopes_ignores_periods_outside_as_of() {
+        let (pool, hid) = setup().await;
+        let acct = insert_account(&pool, &hid, "Gas", "expense", "debit", false).await;
+        let env = insert_envelope(&pool, &hid, &acct, "Gas").await;
+        insert_period(&pool, &env, 0, 100, 10_000, 500).await;
+
+        let envelopes = current_envelope_periods(&pool, &hid, 1_000).await.unwrap();
+        assert_eq!(envelopes[0].allocated_cents, 0);
+        assert_eq!(envelopes[0].spent_cents, 0);
+    }
+
+    #[tokio::test]
+    async fn envelopes_isolate_households() {
+        let (pool, hid_a) = setup().await;
+        let hid_b = new_ulid();
+        sqlx::query(
+            "INSERT INTO households (id, name, timezone, created_at) VALUES (?, 'B', 'UTC', 0)",
+        )
+        .bind(&hid_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let acct_a = insert_account(&pool, &hid_a, "A-Groc", "expense", "debit", false).await;
+        let acct_b = insert_account(&pool, &hid_b, "B-Groc", "expense", "debit", false).await;
+        insert_envelope(&pool, &hid_a, &acct_a, "A-Groc").await;
+        insert_envelope(&pool, &hid_b, &acct_b, "B-Groc").await;
+
+        let a = current_envelope_periods(&pool, &hid_a, 1_000).await.unwrap();
+        assert!(a.iter().all(|e| e.name != "B-Groc"));
+        assert!(a.iter().any(|e| e.name == "A-Groc"));
     }
 }
