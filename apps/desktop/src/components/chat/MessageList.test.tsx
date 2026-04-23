@@ -53,6 +53,7 @@ describe("MessageList", () => {
   it("shows avatar for ai and proactive messages", () => {
     render(<MessageList messages={buildMessages()} />);
 
-    expect(screen.getAllByLabelText(/ai avatar/i).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByLabelText(/ai avatar/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/proactive avatar/i)).toBeInTheDocument();
   });
 });

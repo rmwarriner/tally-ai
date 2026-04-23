@@ -6,7 +6,7 @@ import type {
 export type ChatMessage =
   | { kind: "user"; id: string; ts: number; text: string }
   | { kind: "ai"; id: string; ts: number; text: string; model?: string }
-  | { kind: "proactive"; id: string; ts: number; text: string }
+  | { kind: "proactive"; id: string; ts: number; text: string; advisory_code?: string }
   | {
       kind: "transaction";
       id: string;

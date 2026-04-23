@@ -1,6 +1,7 @@
 import { ArtifactCard } from "../artifacts/ArtifactCard";
 import { AIMessage } from "./AIMessage";
 import { DateSeparator } from "./DateSeparator";
+import { ProactiveMessage } from "./ProactiveMessage";
 import { TransactionCard } from "./TransactionCard";
 import { UserMessage } from "./UserMessage";
 import type { ChatMessage } from "./chatTypes";
@@ -43,7 +44,14 @@ function renderMessage(message: ChatMessage) {
     case "ai":
       return <AIMessage text={message.text} />;
     case "proactive":
-      return <AIMessage text={message.text} />;
+      return (
+        <ProactiveMessage
+          id={message.id}
+          text={message.text}
+          ts={message.ts}
+          advisory_code={message.advisory_code}
+        />
+      );
     case "transaction":
       return (
         <TransactionCard

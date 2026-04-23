@@ -5,18 +5,6 @@
   margin-bottom: 8px;
 }
 
-.avatar {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--color-info, #2563eb);
-  color: #ffffff;
-  font-size: 7px;
-  line-height: 14px;
-  text-align: center;
-}
-
 .bubble {
   max-width: 70%;
   border-radius: 14px;

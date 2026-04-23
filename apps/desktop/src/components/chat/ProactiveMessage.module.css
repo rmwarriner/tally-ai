@@ -1,0 +1,27 @@
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.bubble {
+  max-width: 72%;
+  border-left: 3px solid var(--color-caution, #d4860a);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(212, 134, 10, 0.08);
+  color: var(--color-text, #111827);
+  white-space: pre-wrap;
+  clip-path: polygon(0% 8px, 8px 0%, 100% 0%, 100% 100%, 0% 100%);
+}
+
+.codePill {
+  display: inline-flex;
+  margin-top: 8px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--color-surface-2, rgba(0, 0, 0, 0.06));
+  color: var(--color-muted, #6b7280);
+  font-size: 11px;
+}

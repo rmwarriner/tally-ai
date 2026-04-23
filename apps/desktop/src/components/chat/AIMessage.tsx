@@ -1,3 +1,4 @@
+import { AIAvatar } from "./AIAvatar";
 import styles from "./AIMessage.module.css";
 
 interface AIMessageProps {
@@ -7,9 +8,7 @@ interface AIMessageProps {
 export function AIMessage({ text }: AIMessageProps) {
   return (
     <div className={styles.row}>
-      <span className={styles.avatar} aria-label="AI avatar">
-        AI
-      </span>
+      <AIAvatar variant="standard" />
       <div className={styles.bubble}>{text}</div>
     </div>
   );
