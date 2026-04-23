@@ -1,5 +1,6 @@
 import { AIMessage } from "./AIMessage";
 import { DateSeparator } from "./DateSeparator";
+import { TransactionCard } from "./TransactionCard";
 import { UserMessage } from "./UserMessage";
 import type { ChatMessage } from "./chatTypes";
 import styles from "./MessageList.module.css";
@@ -44,9 +45,20 @@ function renderMessage(message: ChatMessage) {
       return <AIMessage text={message.text} />;
     case "transaction":
       return (
-        <div className={styles.placeholderCard} aria-label="Transaction card placeholder">
-          Transaction {message.transaction_id}
-        </div>
+        <TransactionCard
+          state={message.state ?? "posted"}
+          transaction={
+            message.transaction ?? {
+              id: message.transaction_id,
+              payee: "Transaction",
+              txn_date: message.ts,
+              amount_cents: 0,
+              account_name: "Account",
+              lines: [],
+            }
+          }
+          replacement={message.replacement}
+        />
       );
     case "artifact":
       return (

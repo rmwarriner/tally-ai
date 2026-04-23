@@ -13,7 +13,21 @@ function buildMessages(): ChatMessage[] {
     { kind: "user", id: "1", ts: yesterday, text: "Old" },
     { kind: "ai", id: "2", ts: yesterday, text: "Old reply" },
     { kind: "proactive", id: "3", ts: now, text: "Heads up" },
-    { kind: "transaction", id: "4", ts: now, transaction_id: "txn_1" },
+    {
+      kind: "transaction",
+      id: "4",
+      ts: now,
+      transaction_id: "txn_1",
+      state: "posted",
+      transaction: {
+        id: "txn_1",
+        payee: "Trader Joe's",
+        txn_date: now,
+        amount_cents: 4299,
+        account_name: "Checking",
+        lines: [],
+      },
+    },
     { kind: "artifact", id: "5", ts: now, artifact_id: "art_1", title: "Balance report" },
     { kind: "user", id: "6", ts: now, text: "New" },
   ];
@@ -26,7 +40,7 @@ describe("MessageList", () => {
     expect(screen.getByText("Old")).toBeInTheDocument();
     expect(screen.getByText("Old reply")).toBeInTheDocument();
     expect(screen.getByText("Heads up")).toBeInTheDocument();
-    expect(screen.getByLabelText(/transaction card placeholder/i)).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: /transaction: trader joe's, \$42.99/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/artifact card placeholder/i)).toBeInTheDocument();
   });
 
