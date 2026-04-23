@@ -1,0 +1,25 @@
+.avatar {
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.standard {
+  width: 14px;
+  height: 14px;
+  background: var(--color-info, #2563eb);
+  font-size: 7px;
+  line-height: 14px;
+}
+
+.proactive {
+  width: 28px;
+  height: 28px;
+  background: var(--color-caution, #d4860a);
+  font-size: 14px;
+  line-height: 1;
+}

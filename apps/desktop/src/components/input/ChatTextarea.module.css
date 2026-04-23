@@ -1,0 +1,23 @@
+.textarea {
+  width: 100%;
+  min-height: 36px;
+  max-height: 144px;
+  resize: none;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--color-bg, #ffffff);
+  color: var(--color-text, #111827);
+  font: inherit;
+  line-height: 1.4;
+}
+
+.textarea:focus {
+  outline: 2px solid var(--color-info, #2563eb);
+  outline-offset: 1px;
+}
+
+.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

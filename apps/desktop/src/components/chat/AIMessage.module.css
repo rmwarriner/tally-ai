@@ -1,0 +1,15 @@
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.bubble {
+  max-width: 70%;
+  border-radius: 14px;
+  padding: 8px 10px;
+  background: var(--color-surface-2);
+  color: var(--color-text, #111827);
+  white-space: pre-wrap;
+}

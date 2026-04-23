@@ -1,10 +1,16 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import { useChatStore } from "./stores/chatStore";
 
 describe("App", () => {
+  beforeEach(() => {
+    useChatStore.setState({ localMessages: [] });
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
   it("renders app shell with sidebar and chat regions", () => {
     render(<App />);
 
@@ -26,5 +32,31 @@ describe("App", () => {
 
     fireEvent.keyDown(window, { key: "b", ctrlKey: true });
     expect(sidebar).toHaveStyle({ width: "280px" });
+  });
+
+  it("routes plain text through sendMessage", () => {
+    render(<App />);
+
+    const textbox = screen.getByRole("textbox", { name: /chat input/i });
+    fireEvent.change(textbox, { target: { value: "Hello" } });
+    fireEvent.keyDown(textbox, { key: "Enter" });
+
+    expect(useChatStore.getState().localMessages[0]).toMatchObject({
+      kind: "user",
+      text: "Hello",
+    });
+  });
+
+  it("routes slash commands through slash dispatch without user echo", () => {
+    render(<App />);
+
+    const textbox = screen.getByRole("textbox", { name: /chat input/i });
+    fireEvent.change(textbox, { target: { value: "/help " } });
+    fireEvent.keyDown(textbox, { key: "Enter" });
+
+    expect(useChatStore.getState().localMessages[0]).toMatchObject({
+      kind: "artifact",
+      title: "Commands",
+    });
   });
 });

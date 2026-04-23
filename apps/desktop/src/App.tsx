@@ -1,7 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { ChatThread } from "./components/chat/ChatThread";
+import { InputBar } from "./components/input/InputBar";
+import { useSendMessage } from "./hooks/useSendMessage";
+import { useSlashDispatch } from "./hooks/useSlashDispatch";
 import { HealthSidebar } from "./components/sidebar/HealthSidebar";
 import { useUIStore } from "./stores/uiStore";
 import styles from "./App.module.css";
@@ -10,6 +13,18 @@ export default function App() {
   const [queryClient] = useState(() => new QueryClient());
   const sidebarState = useUIStore((state) => state.sidebarState);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
+  const sendMessage = useSendMessage();
+  const dispatchSlash = useSlashDispatch();
+  const onSend = useCallback(
+    (text: string) => {
+      if (text.startsWith("/")) {
+        void dispatchSlash(text);
+        return;
+      }
+      sendMessage(text);
+    },
+    [dispatchSlash, sendMessage],
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -31,6 +46,7 @@ export default function App() {
         <HealthSidebar state={sidebarState} onToggle={toggleSidebar} />
         <main className={styles.main}>
           <ChatThread />
+          <InputBar onSend={onSend} isStreaming={false} />
         </main>
       </div>
     </QueryClientProvider>

@@ -1,0 +1,194 @@
+.card {
+  border-radius: 6px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-surface, #f9fafb);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.posted {
+  border-left: 2px solid var(--color-positive, #2d9e6b);
+}
+
+.pending {
+  border-left: 2px solid var(--color-caution, #d4860a);
+}
+
+.voided {
+  border-left: 2px solid var(--color-muted, #6b7280);
+  opacity: 0.6;
+}
+
+.content {
+  padding: 10px 12px;
+}
+
+.header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.meta {
+  min-width: 0;
+}
+
+.payee {
+  margin: 0;
+  color: var(--color-text, #111827);
+  font-weight: 600;
+}
+
+.dateAccount {
+  margin-top: 2px;
+  color: var(--color-muted, #6b7280);
+  font-size: 12px;
+}
+
+.amount {
+  margin: 0;
+  color: var(--color-text, #111827);
+  text-align: right;
+  font-family: "SF Mono", "Menlo", monospace;
+  font-weight: 600;
+}
+
+.struck {
+  text-decoration: line-through;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 6px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.badgePending {
+  color: var(--color-caution, #d4860a);
+  background: color-mix(in srgb, var(--color-caution, #d4860a) 16%, white);
+}
+
+.badgeVoided {
+  color: var(--color-muted, #6b7280);
+  background: color-mix(in srgb, var(--color-muted, #6b7280) 16%, white);
+}
+
+.actionRow {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.postNowButton {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: var(--color-bg, #ffffff);
+  color: var(--color-text, #111827);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.postNowButton:hover {
+  border-color: var(--color-caution, #d4860a);
+}
+
+.drawer {
+  margin-top: 8px;
+}
+
+.drawerToggle {
+  width: 100%;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--color-bg, #ffffff);
+  color: var(--color-text, #111827);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.drawerLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lineList {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  background: var(--color-bg, #ffffff);
+}
+
+.lineItem {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+  font-size: 12px;
+}
+
+.lineItem:first-child {
+  border-top: none;
+}
+
+.side {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-muted, #6b7280);
+}
+
+.lineAccount {
+  color: var(--color-text, #111827);
+}
+
+.lineAmount {
+  font-family: "SF Mono", "Menlo", monospace;
+  color: var(--color-text, #111827);
+}
+
+.connector {
+  position: relative;
+  margin: 6px 0;
+  text-align: center;
+  color: var(--color-muted, #6b7280);
+  font-size: 11px;
+  text-transform: lowercase;
+}
+
+.connector::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  bottom: -8px;
+  border-left: 2px dashed var(--color-border, #e5e7eb);
+  transform: translateX(-50%);
+}
+
+.connectorLabel {
+  position: relative;
+  background: var(--color-bg, #ffffff);
+  padding: 0 6px;
+}
