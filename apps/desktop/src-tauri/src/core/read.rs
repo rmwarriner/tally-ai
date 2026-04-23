@@ -138,6 +138,71 @@ pub async fn current_envelope_periods(
         .collect())
 }
 
+#[derive(sqlx::FromRow)]
+struct ComingUpRow {
+    id: String,
+    txn_date: i64,
+    status: String,
+    memo: Option<String>,
+    amount_cents: i64,
+}
+
+/// Returns the union of pending proposals and future-dated posted
+/// transactions, ordered by txn_date ascending, limited to `limit` rows.
+/// `amount_cents` is the sum of debits on expense accounts; if none,
+/// falls back to the sum of debits on asset accounts; else 0.
+pub async fn coming_up_transactions(
+    pool: &SqlitePool,
+    household_id: &str,
+    as_of_ms: i64,
+    limit: i64,
+) -> Result<Vec<ComingUpTxn>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, ComingUpRow>(
+        r#"
+        SELECT
+            t.id,
+            t.txn_date,
+            t.status,
+            t.memo,
+            COALESCE(
+              (SELECT SUM(jl.amount) FROM journal_lines jl
+                 JOIN accounts a ON a.id = jl.account_id
+               WHERE jl.transaction_id = t.id
+                 AND jl.side = 'debit'
+                 AND a.type = 'expense'),
+              (SELECT SUM(jl.amount) FROM journal_lines jl
+                 JOIN accounts a ON a.id = jl.account_id
+               WHERE jl.transaction_id = t.id
+                 AND jl.side = 'debit'
+                 AND a.type = 'asset'),
+              0
+            ) AS amount_cents
+        FROM transactions t
+        WHERE t.household_id = ?
+          AND (t.status = 'pending' OR (t.status = 'posted' AND t.txn_date > ?))
+        ORDER BY t.txn_date ASC
+        LIMIT ?
+        "#,
+    )
+    .bind(household_id)
+    .bind(as_of_ms)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| ComingUpTxn {
+            id: r.id,
+            txn_date: r.txn_date,
+            status: r.status,
+            payee: r.memo.clone(),
+            memo: r.memo,
+            amount_cents: r.amount_cents,
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,5 +457,79 @@ mod tests {
         let a = current_envelope_periods(&pool, &hid_a, 1_000).await.unwrap();
         assert!(a.iter().all(|e| e.name != "B-Groc"));
         assert!(a.iter().any(|e| e.name == "A-Groc"));
+    }
+
+    #[tokio::test]
+    async fn coming_up_includes_pending_with_expense_amount() {
+        let (pool, hid) = setup().await;
+        let asset = insert_account(&pool, &hid, "Checking", "asset", "debit", false).await;
+        let expense = insert_account(&pool, &hid, "Groceries", "expense", "debit", false).await;
+
+        let tid = insert_txn(&pool, &hid, "pending", 1_000).await;
+        sqlx::query(
+            "UPDATE transactions SET memo = 'Trader Joes' WHERE id = ?",
+        )
+        .bind(&tid)
+        .execute(&pool)
+        .await
+        .unwrap();
+        insert_line(&pool, &tid, &expense, 4_200, "debit").await;
+        insert_line(&pool, &tid, &asset, 4_200, "credit").await;
+
+        let items = coming_up_transactions(&pool, &hid, 5_000, 50).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].status, "pending");
+        assert_eq!(items[0].payee.as_deref(), Some("Trader Joes"));
+        assert_eq!(items[0].memo.as_deref(), Some("Trader Joes"));
+        assert_eq!(items[0].amount_cents, 4_200);
+    }
+
+    #[tokio::test]
+    async fn coming_up_includes_future_posted() {
+        let (pool, hid) = setup().await;
+        let asset = insert_account(&pool, &hid, "Checking", "asset", "debit", false).await;
+        let equity = insert_account(&pool, &hid, "Equity", "equity", "credit", false).await;
+
+        let tid = insert_txn(&pool, &hid, "posted", 10_000).await;
+        insert_line(&pool, &tid, &asset, 1_000, "debit").await;
+        insert_line(&pool, &tid, &equity, 1_000, "credit").await;
+
+        let items = coming_up_transactions(&pool, &hid, 1_000, 50).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].status, "posted");
+        // No expense line; amount falls back to sum of asset debits.
+        assert_eq!(items[0].amount_cents, 1_000);
+    }
+
+    #[tokio::test]
+    async fn coming_up_excludes_past_posted() {
+        let (pool, hid) = setup().await;
+        let asset = insert_account(&pool, &hid, "Checking", "asset", "debit", false).await;
+        let equity = insert_account(&pool, &hid, "Equity", "equity", "credit", false).await;
+
+        let tid = insert_txn(&pool, &hid, "posted", 0).await;
+        insert_line(&pool, &tid, &asset, 1_000, "debit").await;
+        insert_line(&pool, &tid, &equity, 1_000, "credit").await;
+
+        let items = coming_up_transactions(&pool, &hid, 5_000, 50).await.unwrap();
+        assert_eq!(items.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn coming_up_respects_limit_and_orders_by_date() {
+        let (pool, hid) = setup().await;
+        let asset = insert_account(&pool, &hid, "Checking", "asset", "debit", false).await;
+        let equity = insert_account(&pool, &hid, "Equity", "equity", "credit", false).await;
+
+        for d in [3_000_i64, 1_000, 2_000] {
+            let tid = insert_txn(&pool, &hid, "pending", d).await;
+            insert_line(&pool, &tid, &asset, 100, "debit").await;
+            insert_line(&pool, &tid, &equity, 100, "credit").await;
+        }
+
+        let items = coming_up_transactions(&pool, &hid, 0, 2).await.unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].txn_date, 1_000);
+        assert_eq!(items[1].txn_date, 2_000);
     }
 }
