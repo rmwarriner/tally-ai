@@ -16,6 +16,7 @@ export type FreshStep =
   | "more_accounts"
   | "envelopes"
   | "more_envelopes"
+  | "api_key"
   | "done";
 
 export type MigrationStep = "welcome" | "file_drop" | "coa_mapping" | "done";

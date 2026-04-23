@@ -117,6 +117,37 @@ Each decision follows this format:
 
 ---
 
+### 2026-04-23 — Claude API Key in OS Keychain
+
+**Decision**: The Claude API key is stored in the operating system's keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service) via the `keyring` crate. A `CLAUDE_API_KEY` env var is accepted as a development fallback. The SQLCipher-protected database is **not** used for this secret.
+
+**Rationale**: Keychain access is gated by the OS user session, which is the right trust boundary for a secret the app needs to read on every chat turn. Keeping it out of the DB means the key is unaffected by passphrase rotation, DB corruption, or export/backup flows. This does not contradict the 2026-04-17 SQLCipher decision — that decision is about the DB passphrase (which the user holds), not other long-lived credentials.
+
+**Status**: Accepted
+
+**Consequences**:
+- Adds `keyring` crate dependency
+- Onboarding gains an "enter API key" step; the key is prompted once and persisted
+- Losing keychain access (new machine, OS reinstall) requires re-entering the key, not restoring from backup
+- Dev loop can use `CLAUDE_API_KEY` without touching the keychain
+
+---
+
+### 2026-04-23 — GnuCash Import via SQLite Backend Only
+
+**Decision**: The Phase 1 GnuCash importer reads GnuCash files saved with the SQLite backend. The XML backend and CSV exports are not supported in Phase 1.
+
+**Rationale**: GnuCash's SQLite schema is stable, documented, and trivially readable via `sqlx`. XML would require a dedicated parser and handling of gzip framing; CSV is lossy (no splits, no GUIDs, no commodities). The user's existing book is on the SQLite backend, so this is sufficient for beta testing.
+
+**Status**: Accepted (Phase 1 constraint)
+
+**Consequences**:
+- Beta users must save their GnuCash book with "File → Save As → SQLite" before importing
+- Idempotency is anchored on GnuCash transaction GUIDs — re-runs are safe
+- XML-backed books are a Phase 2 concern if a beta user requests it
+
+---
+
 ## Superseded Decisions
 
 (None yet — first major decisions just made.)

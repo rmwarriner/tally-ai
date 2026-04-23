@@ -27,6 +27,7 @@ tauri-plugin-shell = "2"
 reqwest.workspace = true
 async-trait.workspace = true
 lru.workspace = true
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 
 [dependencies.libsqlite3-sys]
 version = "0.30"

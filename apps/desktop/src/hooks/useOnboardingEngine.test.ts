@@ -307,17 +307,84 @@ describe("fresh start — more_envelopes step", () => {
     expect(useOnboardingStore.getState().freshStep).toBe("envelopes");
   });
 
-  it("completes onboarding on 'no' and shows handoff", async () => {
-    const addHandoffMessage = vi.fn();
-    const handler = buildOnboardingHandler(makeDeps({ addHandoffMessage }));
+  it("advances to api_key step on 'no'", async () => {
+    const addSystemMessage = vi.fn();
+    const handler = buildOnboardingHandler(makeDeps({ addSystemMessage }));
     await handler.handleInput("no");
-    expect(addHandoffMessage).toHaveBeenCalledWith(
-      "Smith Family",
-      1,
-      1,
-      expect.arrayContaining([expect.any(String)]),
+    expect(useOnboardingStore.getState().freshStep).toBe("api_key");
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Claude API key"),
+      "info",
     );
+  });
+});
+
+describe("fresh start — api_key step", () => {
+  beforeEach(() => {
+    useOnboardingStore.getState().setPhase("fresh_start");
+    useOnboardingStore.getState().setFreshStep("api_key");
+    useOnboardingStore.getState().patchDraft({ householdName: "Smith Family" });
+    useOnboardingStore.getState().addDraftAccount({ name: "Checking", type: "asset", balanceCents: 0 });
+    useOnboardingStore.getState().addDraftEnvelope({ name: "Groceries" });
+  });
+
+  it("saves the key and completes onboarding", async () => {
+    mockInvoke.mockResolvedValue(undefined);
+    const addHandoffMessage = vi.fn();
+    const addSetupCard = vi.fn();
+    const handler = buildOnboardingHandler(makeDeps({ addHandoffMessage, addSetupCard }));
+    await handler.handleInput("sk-ant-api03-abc123");
+    expect(mockInvoke).toHaveBeenCalledWith("set_api_key", { key: "sk-ant-api03-abc123" });
+    expect(addSetupCard).toHaveBeenCalledWith(
+      "household_created",
+      "API key saved",
+      expect.stringContaining("keychain"),
+    );
+    expect(addHandoffMessage).toHaveBeenCalledWith("Smith Family", 1, 1, expect.any(Array));
     expect(useOnboardingStore.getState().phase).toBe("complete");
+  });
+
+  it("skips the key on 'skip' and still completes onboarding", async () => {
+    const addSystemMessage = vi.fn();
+    const addHandoffMessage = vi.fn();
+    const handler = buildOnboardingHandler(
+      makeDeps({ addSystemMessage, addHandoffMessage }),
+    );
+    await handler.handleInput("skip");
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("later"),
+      "info",
+    );
+    expect(addHandoffMessage).toHaveBeenCalled();
+    expect(useOnboardingStore.getState().phase).toBe("complete");
+  });
+
+  it("surfaces an error when set_api_key fails and stays on the step", async () => {
+    mockInvoke.mockRejectedValue(new Error("kaboom"));
+    const addSystemMessage = vi.fn();
+    const addHandoffMessage = vi.fn();
+    const handler = buildOnboardingHandler(
+      makeDeps({ addSystemMessage, addHandoffMessage }),
+    );
+    await handler.handleInput("sk-ant-bad");
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("kaboom"),
+      "error",
+    );
+    expect(addHandoffMessage).not.toHaveBeenCalled();
+    expect(useOnboardingStore.getState().freshStep).toBe("api_key");
+  });
+
+  it("re-prompts on empty input", async () => {
+    const addSystemMessage = vi.fn();
+    const handler = buildOnboardingHandler(makeDeps({ addSystemMessage }));
+    await handler.handleInput("   ");
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("skip"),
+      "info",
+    );
+    expect(useOnboardingStore.getState().freshStep).toBe("api_key");
   });
 });
 

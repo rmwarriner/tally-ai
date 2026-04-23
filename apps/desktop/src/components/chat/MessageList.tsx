@@ -1,3 +1,6 @@
+import { useState } from "react";
+
+import { useCommitProposal } from "../../hooks/useCommitProposal";
 import { ArtifactCard } from "../artifacts/ArtifactCard";
 import { HandoffMessage } from "../onboarding/HandoffMessage";
 import { SetupCard } from "../onboarding/SetupCard";
@@ -13,6 +16,49 @@ import styles from "./MessageList.module.css";
 interface MessageListProps {
   messages: ChatMessage[];
   onPromptClick?: (prompt: string) => void;
+}
+
+interface TransactionMessageProps {
+  message: Extract<ChatMessage, { kind: "transaction" }>;
+}
+
+function TransactionMessage({ message }: TransactionMessageProps) {
+  const { commit, discard } = useCommitProposal();
+  const [isCommitting, setIsCommitting] = useState(false);
+  const proposal = message.proposal;
+  const state = message.state ?? "posted";
+  const isProposal = state === "pending" && proposal !== undefined;
+
+  const handleConfirm = async () => {
+    if (!proposal) return;
+    setIsCommitting(true);
+    try {
+      await commit(message.id, proposal);
+    } finally {
+      setIsCommitting(false);
+    }
+  };
+
+  return (
+    <TransactionCard
+      state={state}
+      transaction={
+        message.transaction ?? {
+          id: message.transaction_id,
+          payee: "Transaction",
+          txn_date: message.ts,
+          amount_cents: 0,
+          account_name: "Account",
+          lines: [],
+        }
+      }
+      replacement={message.replacement}
+      onConfirm={isProposal ? handleConfirm : undefined}
+      onDiscard={isProposal ? () => discard(message.id) : undefined}
+      isCommitting={isCommitting}
+      commitError={message.commit_error}
+    />
+  );
 }
 
 function toLocalDateKey(ts: number): string {
@@ -59,22 +105,7 @@ function renderMessage(message: ChatMessage, onPromptClick?: (prompt: string) =>
     case "system":
       return <SystemMessage text={message.text} tone={message.tone} />;
     case "transaction":
-      return (
-        <TransactionCard
-          state={message.state ?? "posted"}
-          transaction={
-            message.transaction ?? {
-              id: message.transaction_id,
-              payee: "Transaction",
-              txn_date: message.ts,
-              amount_cents: 0,
-              account_name: "Account",
-              lines: [],
-            }
-          }
-          replacement={message.replacement}
-        />
-      );
+      return <TransactionMessage message={message} />;
     case "artifact":
       return (
         <ArtifactCard title={message.title}>

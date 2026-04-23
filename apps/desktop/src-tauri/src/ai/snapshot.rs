@@ -77,6 +77,45 @@ impl FinancialSnapshot {
 
         out
     }
+
+    /// Prompt-ready snapshot that exposes every account's ULID and name,
+    /// including zero-balance accounts. Claude uses this to pick valid
+    /// `account_id`s for proposals — `to_prompt_text` alone would hide
+    /// freshly-created accounts with no activity yet.
+    pub fn to_prompt_text_with_ids(&self) -> String {
+        let mut out = String::from("=== Financial Snapshot ===\n");
+
+        if self.balances.is_empty() {
+            out.push_str("Accounts: none\n");
+        } else {
+            out.push_str("Accounts (id • name • type • balance)\n");
+            for b in &self.balances {
+                out.push_str(&format!(
+                    "  {} • {} • {} • {}\n",
+                    b.account_id,
+                    b.account_name,
+                    b.account_type,
+                    format_dollars(b.balance_cents)
+                ));
+            }
+        }
+
+        if !self.envelopes.is_empty() {
+            out.push_str("\nEnvelopes (id • name • spent/allocated • remaining)\n");
+            for e in &self.envelopes {
+                out.push_str(&format!(
+                    "  {} • {} • {}/{} • {}\n",
+                    e.envelope_id,
+                    e.envelope_name,
+                    format_dollars(e.spent_cents),
+                    format_dollars(e.allocated_cents),
+                    format_dollars(e.remaining_cents),
+                ));
+            }
+        }
+
+        out
+    }
 }
 
 pub async fn build_snapshot(
@@ -393,6 +432,34 @@ mod tests {
         };
         let text = snap.to_prompt_text();
         assert!(!text.contains("Empty"));
+    }
+
+    #[test]
+    fn prompt_text_with_ids_includes_zero_balance_accounts_and_ids() {
+        let snap = FinancialSnapshot {
+            household_id: "hid".to_string(),
+            as_of_ms: 0,
+            balances: vec![
+                AccountBalance {
+                    account_id: "acc_chk".to_string(),
+                    account_name: "Checking".to_string(),
+                    account_type: "asset".to_string(),
+                    balance_cents: 10000,
+                },
+                AccountBalance {
+                    account_id: "acc_grc".to_string(),
+                    account_name: "Groceries".to_string(),
+                    account_type: "expense".to_string(),
+                    balance_cents: 0,
+                },
+            ],
+            envelopes: vec![],
+        };
+        let text = snap.to_prompt_text_with_ids();
+        assert!(text.contains("acc_chk"), "expected Checking id: {text}");
+        assert!(text.contains("Checking"));
+        assert!(text.contains("acc_grc"), "zero-balance expense account must show: {text}");
+        assert!(text.contains("Groceries"));
     }
 
     #[test]

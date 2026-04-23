@@ -17,6 +17,8 @@ interface ChatStore {
     envelopeCount: number,
     starterPrompts: string[],
   ) => void;
+  updateMessage: (id: string, patch: Partial<ChatMessage>) => void;
+  removeMessage: (id: string) => void;
 }
 
 function makeBaseMessage<K extends ChatMessage["kind"]>(kind: K): { kind: K; id: string; ts: number } {
@@ -75,5 +77,17 @@ export const useChatStore = create<ChatStore>((set) => ({
       starterPrompts,
     };
     set((state) => ({ localMessages: [...state.localMessages, message] }));
+  },
+  updateMessage: (id, patch) => {
+    set((state) => ({
+      localMessages: state.localMessages.map((m) =>
+        m.id === id ? ({ ...m, ...patch } as ChatMessage) : m,
+      ),
+    }));
+  },
+  removeMessage: (id) => {
+    set((state) => ({
+      localMessages: state.localMessages.filter((m) => m.id !== id),
+    }));
   },
 }));

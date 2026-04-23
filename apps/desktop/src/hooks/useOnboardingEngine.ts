@@ -218,10 +218,45 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
           store.getState().setFreshStep("envelopes");
           deps.addSystemMessage("What's the next envelope?", "info");
         } else {
-          const { householdName, accounts, envelopes } = store.getState().draft;
-          deps.addHandoffMessage(householdName, accounts.length, envelopes.length, STARTER_PROMPTS);
-          store.getState().setPhase("complete");
+          store.getState().setFreshStep("api_key");
+          deps.addSystemMessage(
+            "Last step: paste your Claude API key so I can help you log transactions. Find it at https://console.anthropic.com/settings/keys. Say \"skip\" if you'd rather set it up later.",
+            "info",
+          );
         }
+        return;
+      }
+
+      case "api_key": {
+        const text = input.trim();
+        if (/^skip$/i.test(text)) {
+          deps.addSystemMessage(
+            "No problem — you can add it later from settings. Chat features that need the AI will be unavailable until then.",
+            "info",
+          );
+        } else if (text.length > 0) {
+          try {
+            await deps.invoke("set_api_key", { key: text });
+            deps.addSetupCard(
+              "household_created",
+              "API key saved",
+              "Stored securely in your OS keychain",
+            );
+          } catch (err) {
+            deps.addSystemMessage(
+              `Couldn't save that key: ${err instanceof Error ? err.message : String(err)}. Try again or say "skip".`,
+              "error",
+            );
+            return;
+          }
+        } else {
+          deps.addSystemMessage('Paste your API key, or say "skip".', "info");
+          return;
+        }
+
+        const { householdName, accounts, envelopes } = store.getState().draft;
+        deps.addHandoffMessage(householdName, accounts.length, envelopes.length, STARTER_PROMPTS);
+        store.getState().setPhase("complete");
         return;
       }
 
