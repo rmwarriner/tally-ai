@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { ChatThread } from "./components/chat/ChatThread";
+import { InputBar } from "./components/input/InputBar";
 import { HealthSidebar } from "./components/sidebar/HealthSidebar";
 import { useUIStore } from "./stores/uiStore";
 import styles from "./App.module.css";
@@ -10,6 +11,9 @@ export default function App() {
   const [queryClient] = useState(() => new QueryClient());
   const sidebarState = useUIStore((state) => state.sidebarState);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
+  const onSend = useCallback((_text: string) => {
+    // TODO(phase2): wire input to AI send-message pipeline.
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -31,6 +35,7 @@ export default function App() {
         <HealthSidebar state={sidebarState} onToggle={toggleSidebar} />
         <main className={styles.main}>
           <ChatThread />
+          <InputBar onSend={onSend} isStreaming={false} />
         </main>
       </div>
     </QueryClientProvider>

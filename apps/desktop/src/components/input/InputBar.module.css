@@ -1,0 +1,28 @@
+.shell {
+  position: relative;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-bg, #ffffff);
+  padding: 10px 12px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.sendButton {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: var(--color-info, #2563eb);
+  color: #ffffff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sendButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

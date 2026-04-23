@@ -1,0 +1,40 @@
+.palette {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--color-bg, #ffffff);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  padding: 6px;
+  z-index: 30;
+}
+
+.option {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.optionSelected {
+  background: var(--color-surface-2, rgba(0, 0, 0, 0.06));
+}
+
+.name {
+  display: block;
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 12px;
+  color: var(--color-text, #111827);
+}
+
+.description {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-muted, #6b7280);
+}
