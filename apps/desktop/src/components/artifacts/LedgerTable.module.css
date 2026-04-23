@@ -1,0 +1,34 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.row:nth-child(odd) {
+  background: var(--color-surface-2, rgba(0, 0, 0, 0.06));
+}
+
+.cell {
+  padding: 6px 8px;
+  vertical-align: top;
+}
+
+.meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.date {
+  color: var(--color-muted, #6b7280);
+  white-space: nowrap;
+}
+
+.payee {
+  color: var(--color-text, #111827);
+}
+
+.amount {
+  text-align: right;
+  font-family: "SF Mono", "Menlo", monospace;
+}

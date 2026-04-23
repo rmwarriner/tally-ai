@@ -1,0 +1,35 @@
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+.row:first-child {
+  border-top: none;
+}
+
+.name {
+  color: var(--color-text, #111827);
+}
+
+.subtotal {
+  font-weight: 700;
+}
+
+.amount {
+  font-family: "SF Mono", "Menlo", monospace;
+  color: var(--color-text, #111827);
+}
+
+.negative {
+  color: var(--color-danger, #c0392b);
+}

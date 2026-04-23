@@ -1,3 +1,4 @@
+import { ArtifactCard } from "../artifacts/ArtifactCard";
 import { AIMessage } from "./AIMessage";
 import { DateSeparator } from "./DateSeparator";
 import { TransactionCard } from "./TransactionCard";
@@ -62,9 +63,11 @@ function renderMessage(message: ChatMessage) {
       );
     case "artifact":
       return (
-        <div className={styles.placeholderCard} aria-label="Artifact card placeholder">
-          Artifact {message.title}
-        </div>
+        <ArtifactCard title={message.title}>
+          <p className={styles.artifactPlaceholder} aria-label="Artifact card placeholder">
+            Artifact {message.artifact_id}
+          </p>
+        </ArtifactCard>
       );
     default:
       return null;
