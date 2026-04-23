@@ -316,7 +316,7 @@ pub struct CreateEnvelopeArgs {
     pub name: String,
 }
 
-/// Creates a new envelope (budget category). Links to the first expense account.
+/// Creates a new envelope and seeds a current-month envelope_periods row.
 /// Returns the new envelope ULID.
 #[tauri::command]
 pub async fn create_envelope(
@@ -324,64 +324,20 @@ pub async fn create_envelope(
     args: CreateEnvelopeArgs,
 ) -> Result<String, String> {
     let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
-    let household_id = state.household_id.lock().expect("household_id lock").clone().ok_or("Household not set")?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or("Household not set")?;
 
-    // Find or create an expense account matching the envelope name
-    let expense_account: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM accounts WHERE household_id = ? AND type = 'expense' AND is_placeholder = 0 LIMIT 1",
+    crate::core::envelope::create_envelope_with_current_period(
+        &pool,
+        &household_id,
+        &args.name,
+        now_ms(),
     )
-    .bind(&household_id)
-    .fetch_optional(&pool)
     .await
-    .map_err(|e| e.to_string())?;
-
-    let account_id = if let Some((id,)) = expense_account {
-        id
-    } else {
-        // Create a generic expense account for this envelope
-        let id = new_ulid();
-        let ts = now_ms();
-        let parent: Option<(String,)> = sqlx::query_as(
-            "SELECT id FROM accounts WHERE household_id = ? AND type = 'expense' AND is_placeholder = 1 AND name = 'Expenses' LIMIT 1",
-        )
-        .bind(&household_id)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-        sqlx::query(
-            "INSERT INTO accounts (id, household_id, parent_id, name, type, normal_balance, is_placeholder, currency, created_at)
-             VALUES (?, ?, ?, ?, 'expense', 'debit', 0, 'USD', ?)",
-        )
-        .bind(&id)
-        .bind(&household_id)
-        .bind(parent.map(|(pid,)| pid))
-        .bind(&args.name)
-        .bind(ts)
-        .execute(&pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-        id
-    };
-
-    let envelope_id = new_ulid();
-    let ts = now_ms();
-
-    sqlx::query(
-        "INSERT INTO envelopes (id, household_id, account_id, name, created_at)
-         VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind(&envelope_id)
-    .bind(&household_id)
-    .bind(&account_id)
-    .bind(&args.name)
-    .bind(ts)
-    .execute(&pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    Ok(envelope_id)
 }
 
 #[derive(Deserialize)]
