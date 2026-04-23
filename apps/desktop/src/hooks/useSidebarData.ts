@@ -15,13 +15,17 @@ export interface EnvelopeStatus {
   spent_cents: number;
 }
 
-export interface PendingTxn {
+export interface ComingUpTxn {
   id: string;
   txn_date: number;
+  status?: "pending" | "posted";
   payee?: string;
   memo?: string;
   amount_cents: number;
 }
+
+// Back-compat alias; remove once no callers reference PendingTxn.
+export type PendingTxn = ComingUpTxn;
 
 export function useAccountBalances() {
   return useQuery({
@@ -42,7 +46,7 @@ export function useEnvelopeStatuses() {
 export function usePendingTransactions() {
   return useQuery({
     queryKey: ["sidebar", "pending"],
-    queryFn: async () => invoke<PendingTxn[]>("get_pending_transactions"),
+    queryFn: async () => invoke<ComingUpTxn[]>("get_pending_transactions"),
     staleTime: 10_000,
   });
 }

@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock Tauri so the onboarding engine doesn't make real IPC calls in tests.
@@ -20,6 +21,15 @@ import App from "./App";
 import { useChatStore } from "./stores/chatStore";
 import { useOnboardingStore, getOnboardingInitialState } from "./stores/onboardingStore";
 
+function renderApp() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>,
+  );
+}
+
 describe("App", () => {
   beforeEach(() => {
     useChatStore.setState({ localMessages: [] });
@@ -29,14 +39,14 @@ describe("App", () => {
   });
 
   it("renders app shell with sidebar and chat regions", () => {
-    render(<App />);
+    renderApp();
 
     expect(screen.getByRole("complementary", { name: /financial health/i })).toBeInTheDocument();
     expect(screen.getByRole("log", { name: /chat thread/i })).toBeInTheDocument();
   });
 
   it("Cmd/Ctrl+B cycles sidebar width open -> icon -> hidden -> open", () => {
-    render(<App />);
+    renderApp();
 
     const sidebar = screen.getByRole("complementary", { name: /financial health/i });
     expect(sidebar).toHaveStyle({ width: "280px" });
@@ -52,7 +62,7 @@ describe("App", () => {
   });
 
   it("routes plain text through sendMessage", () => {
-    render(<App />);
+    renderApp();
 
     const textbox = screen.getByRole("textbox", { name: /chat input/i });
     fireEvent.change(textbox, { target: { value: "Hello" } });
@@ -65,7 +75,7 @@ describe("App", () => {
   });
 
   it("routes slash commands through slash dispatch without user echo", () => {
-    render(<App />);
+    renderApp();
 
     const textbox = screen.getByRole("textbox", { name: /chat input/i });
     fireEvent.change(textbox, { target: { value: "/help " } });

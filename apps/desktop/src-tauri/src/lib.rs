@@ -31,6 +31,9 @@ pub fn run() {
             commands::delete_api_key,
             commands::submit_message,
             commands::commit_proposal,
+            commands::get_account_balances,
+            commands::get_current_envelope_periods,
+            commands::get_pending_transactions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
