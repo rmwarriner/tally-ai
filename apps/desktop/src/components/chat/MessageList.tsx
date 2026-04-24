@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { useCommitProposal } from "../../hooks/useCommitProposal";
 import { ArtifactCard } from "../artifacts/ArtifactCard";
+import { GnuCashMappingCard } from "../artifacts/GnuCashMappingCard";
 import { HandoffMessage } from "../onboarding/HandoffMessage";
 import { SetupCard } from "../onboarding/SetupCard";
 import { AIMessage } from "./AIMessage";
@@ -130,6 +131,17 @@ function renderMessage(message: ChatMessage, onPromptClick?: (prompt: string) =>
           envelopeCount={message.envelopeCount}
           starterPrompts={message.starterPrompts}
           onPromptClick={onPromptClick ?? (() => undefined)}
+        />
+      );
+    case "gnucash_mapping":
+      // onConfirm and onRequestEdit are no-ops in the chat renderer;
+      // the onboarding engine owns the phase transition via handleConfirmMapping.
+      // TODO(phase2): Wire confirmMapping / requestEdit callbacks from onboarding context.
+      return (
+        <GnuCashMappingCard
+          plan={message.plan}
+          onConfirm={() => undefined}
+          onRequestEdit={() => undefined}
         />
       );
     default:
