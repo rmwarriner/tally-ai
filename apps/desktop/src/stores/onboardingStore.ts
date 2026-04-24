@@ -56,6 +56,8 @@ interface OnboardingStore {
   migrationStep: MigrationStep;
   currentAccountIndex: number;
   draft: OnboardingDraft;
+  gnucashPickedPath: string | null;
+  gnucashImportId: string | null;
 
   setPhase: (phase: OnboardingPhase) => void;
   setFreshStep: (step: FreshStep) => void;
@@ -64,6 +66,8 @@ interface OnboardingStore {
   addDraftAccount: (account: DraftAccount) => void;
   addDraftEnvelope: (envelope: DraftEnvelope) => void;
   advanceAccountIndex: () => void;
+  setGnuCashPickedPath: (path: string | null) => void;
+  setGnuCashImportId: (id: string | null) => void;
 }
 
 const INITIAL_DRAFT: OnboardingDraft = {
@@ -81,6 +85,8 @@ function makeInitialState() {
     migrationStep: "welcome" as MigrationStep,
     currentAccountIndex: 0,
     draft: { ...INITIAL_DRAFT, accounts: [], envelopes: [] },
+    gnucashPickedPath: null as string | null,
+    gnucashImportId: null as string | null,
   };
 }
 
@@ -110,6 +116,10 @@ export const useOnboardingStore = create<OnboardingStore>((set) => ({
 
   advanceAccountIndex: () =>
     set((s) => ({ currentAccountIndex: s.currentAccountIndex + 1 })),
+
+  setGnuCashPickedPath: (path) => set({ gnucashPickedPath: path }),
+
+  setGnuCashImportId: (id) => set({ gnucashImportId: id }),
 }));
 
 // Exported for test resets
