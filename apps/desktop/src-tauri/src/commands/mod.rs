@@ -779,10 +779,12 @@ pub async fn reconcile_gnucash_import(
         .map_err(|e| e.to_string())?;
 
     // Rebuild minimal AccountMapping set from accounts table (rows stamped with this import_id).
+    // Query by gnc_guid directly — leaf-name matching is unsound for books with repeated
+    // leaf names under different parents (e.g. Assets:Savings vs Investments:Savings).
     #[derive(sqlx::FromRow)]
-    struct Row { id: String, name: String }
+    struct Row { id: String, name: String, gnc_guid: Option<String> }
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT id, name FROM accounts WHERE household_id = ? AND import_id = ?",
+        "SELECT id, name, gnc_guid FROM accounts WHERE household_id = ? AND import_id = ?",
     )
     .bind(&household_id)
     .bind(&args.import_id)
@@ -790,18 +792,19 @@ pub async fn reconcile_gnucash_import(
     .await
     .map_err(|e| e.to_string())?;
 
-    // Match Tally account_name to GnuCash account.name. Duplicate-name blocked during mapping.
-    let name_to_gnc: std::collections::HashMap<&str, &crate::core::import::gnucash::GncAccount> =
-        book.accounts.iter().map(|a| (a.name.as_str(), a)).collect();
+    let by_guid: std::collections::HashMap<&str, &crate::core::import::gnucash::GncAccount> =
+        book.accounts.iter().map(|a| (a.guid.as_str(), a)).collect();
 
     let account_mappings: Vec<AccountMapping> = rows.iter().filter_map(|r| {
-        name_to_gnc.get(r.name.as_str()).map(|ga| AccountMapping {
-            gnc_guid: ga.guid.clone(),
+        let guid = r.gnc_guid.as_deref()?;
+        let ga = by_guid.get(guid)?;
+        Some(AccountMapping {
+            gnc_guid: guid.to_string(),
             gnc_full_name: ga.full_name.clone(),
             tally_account_id: r.id.clone(),
             tally_name: r.name.clone(),
             tally_parent_id: None,
-            tally_type: crate::core::import::gnucash::AccountType::Asset, // unused by reconcile
+            tally_type: crate::core::import::gnucash::AccountType::Asset,
             tally_normal_balance: crate::core::import::gnucash::NormalBalance::Debit,
         })
     }).collect();
