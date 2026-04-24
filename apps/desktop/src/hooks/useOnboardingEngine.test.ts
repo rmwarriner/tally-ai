@@ -50,6 +50,7 @@ function makeDeps(overrides: Partial<OnboardingDeps> = {}): OnboardingDeps {
     invalidateSidebar: vi.fn(),
     readGnuCashFile: vi.fn().mockResolvedValue(MOCK_PREVIEW),
     gnucashBuildDefaultPlan: vi.fn().mockResolvedValue(MOCK_PLAN),
+    gnucashApplyMappingEdit: vi.fn().mockResolvedValue(MOCK_PLAN),
     commitGnuCashImport: vi.fn().mockResolvedValue({
       import_id: "imp",
       accounts_created: 3,
@@ -524,6 +525,86 @@ describe("GnuCash migration branch — Task 16: file picker flow", () => {
     await handler.handleInput("migrate from GnuCash");
     await handler.handleFilePicked("/tmp/book.gnucash");
     expect(handler.phase()).toBe("gnucash_import_mapping");
+  });
+});
+
+describe("GnuCash migration branch — Task 18: mapping-edit loop", () => {
+  async function setupMappingPhase(overrides: Partial<OnboardingDeps> = {}) {
+    const deps = makeDeps(overrides);
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    return { deps, handler };
+  }
+
+  it("applies a change_type edit when user asks 'make X a liability'", async () => {
+    const updatedPlan: ImportPlan = {
+      household_id: "hh",
+      import_id: "imp",
+      account_mappings: [
+        {
+          gnc_guid: "a",
+          gnc_full_name: "Groceries",
+          tally_account_id: "u1",
+          tally_name: "Groceries",
+          tally_parent_id: null,
+          tally_type: "liability",
+          tally_normal_balance: "credit",
+        },
+      ],
+      transactions: [],
+    };
+    const applyEdit = vi.fn().mockResolvedValue(updatedPlan);
+    const addGnuCashMappingMessage = vi.fn();
+    const { handler } = await setupMappingPhase({
+      gnucashApplyMappingEdit: applyEdit,
+      addGnuCashMappingMessage,
+    });
+
+    await handler.handleInput("make Groceries a liability");
+    expect(applyEdit).toHaveBeenCalledWith({
+      kind: "change_type",
+      gnc_full_name: "Groceries",
+      new_type: "liability",
+      new_normal_balance: "credit",
+    });
+    expect(addGnuCashMappingMessage).toHaveBeenCalledTimes(2); // once on pick, once after edit
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_mapping");
+  });
+
+  it("applies a rename edit when user asks 'rename X to Y'", async () => {
+    const applyEdit = vi.fn().mockResolvedValue(MOCK_PLAN);
+    const { handler } = await setupMappingPhase({ gnucashApplyMappingEdit: applyEdit });
+    await handler.handleInput("rename Groceries to Food");
+    expect(applyEdit).toHaveBeenCalledWith({
+      kind: "rename",
+      gnc_full_name: "Groceries",
+      new_tally_name: "Food",
+    });
+  });
+
+  it("emits info message when mapping edit text is not parseable", async () => {
+    const addSystemMessage = vi.fn();
+    const { handler } = await setupMappingPhase({ addSystemMessage });
+    await handler.handleInput("I want to change something but not sure how");
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("make"),
+      "info",
+    );
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_mapping");
+  });
+
+  it("confirms the plan and transitions to reconciling phase", async () => {
+    const commit = vi.fn().mockResolvedValue({
+      import_id: "imp",
+      accounts_created: 3,
+      transactions_committed: 2,
+      transactions_skipped: 0,
+    });
+    const { handler } = await setupMappingPhase({ commitGnuCashImport: commit });
+    await handler.handleConfirmMapping();
+    expect(commit).toHaveBeenCalled();
+    expect(handler.phase()).toBe("gnucash_import_reconciling");
   });
 });
 

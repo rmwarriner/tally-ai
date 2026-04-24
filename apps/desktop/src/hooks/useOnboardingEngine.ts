@@ -1,7 +1,7 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect } from "react";
 
-import type { GnuCashPreview, ImportPlan, ImportReceipt } from "@tally/core-types";
+import type { GnuCashPreview, ImportPlan, ImportReceipt, MappingEdit, ImportAccountType, NormalBalance } from "@tally/core-types";
 import type { SetupCardVariant } from "../components/onboarding/SetupCard";
 import { useChatStore } from "../stores/chatStore";
 import { useOnboardingStore } from "../stores/onboardingStore";
@@ -22,6 +22,7 @@ export interface OnboardingDeps {
   invalidateSidebar: () => void | Promise<void>;
   readGnuCashFile: (path: string) => Promise<GnuCashPreview>;
   gnucashBuildDefaultPlan: (path: string) => Promise<ImportPlan>;
+  gnucashApplyMappingEdit: (edit: MappingEdit) => Promise<ImportPlan>;
   commitGnuCashImport: () => Promise<ImportReceipt>;
 }
 
@@ -49,6 +50,23 @@ function isAffirmative(text: string): boolean {
 
 function isNegative(text: string): boolean {
   return /^(no|nope|done|none|that'?s? (all|it)|finished|stop|n)$/i.test(text.trim());
+}
+
+function parseMappingEdit(text: string): MappingEdit | null {
+  const changeType = text.match(/make\s+(\S+(?:\s+\S+)*?)\s+(?:an?\s+)?(asset|liability|income|expense|equity)\b/i);
+  if (changeType) {
+    const [, name, type] = changeType;
+    const new_type = type.toLowerCase() as ImportAccountType;
+    const new_normal_balance: NormalBalance =
+      new_type === "asset" || new_type === "expense" ? "debit" : "credit";
+    return { kind: "change_type", gnc_full_name: name.trim(), new_type, new_normal_balance };
+  }
+  const rename = text.match(/rename\s+(\S+(?:\s+\S+)*?)\s+to\s+(.+)/i);
+  if (rename) {
+    const [, name, newName] = rename;
+    return { kind: "rename", gnc_full_name: name.trim(), new_tally_name: newName.trim() };
+  }
+  return null;
 }
 
 export function buildOnboardingHandler(deps: OnboardingDeps) {
@@ -366,7 +384,24 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
         return;
 
       case "gnucash_import_pick_file":
-      case "gnucash_import_mapping":
+        // In this phase, users interact via the file picker component (handleFilePicked).
+        // Text messages are ignored here.
+        return;
+
+      case "gnucash_import_mapping": {
+        const edit = parseMappingEdit(text);
+        if (edit) {
+          const updatedPlan = await deps.gnucashApplyMappingEdit(edit);
+          deps.addGnuCashMappingMessage(updatedPlan);
+        } else {
+          deps.addSystemMessage(
+            "Try: 'make Groceries a liability' or 'rename Groceries to Food'",
+            "info",
+          );
+        }
+        return;
+      }
+
       case "gnucash_import_committing":
       case "gnucash_import_reconciling":
       case "gnucash_import_done":
@@ -393,11 +428,18 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
     store.getState().setPhase("gnucash_import_mapping");
   }
 
+  async function handleConfirmMapping(): Promise<void> {
+    store.getState().setPhase("gnucash_import_committing");
+    await deps.commitGnuCashImport();
+    store.getState().setPhase("gnucash_import_reconciling");
+    // TODO(phase2): Wire reconciliation in T-074
+  }
+
   function phase() {
     return store.getState().phase;
   }
 
-  return { checkAndStart, handleInput, handleFilePicked, phase, gnucashState };
+  return { checkAndStart, handleInput, handleFilePicked, handleConfirmMapping, phase, gnucashState };
 }
 
 export function useOnboardingEngine() {
@@ -419,6 +461,8 @@ export function useOnboardingEngine() {
       tauriInvoke<GnuCashPreview>("read_gnucash_file", { path }),
     gnucashBuildDefaultPlan: (path: string) =>
       tauriInvoke<ImportPlan>("gnucash_build_default_plan", { path }),
+    gnucashApplyMappingEdit: (edit: MappingEdit) =>
+      tauriInvoke<ImportPlan>("gnucash_apply_mapping_edit", { edit }),
     commitGnuCashImport: () =>
       tauriInvoke<ImportReceipt>("gnucash_commit_import", {}),
   };
