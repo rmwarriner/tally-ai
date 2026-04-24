@@ -155,4 +155,22 @@ mod tests {
             .bind(&hh_id).fetch_one(&pool).await.unwrap();
         assert_eq!(txn_count, 2);
     }
+
+    #[tokio::test]
+    async fn running_same_plan_twice_skips_all_transactions_on_second_run() {
+        let (_dir, pool, hh_id) = setup_db().await;
+        let fixture_dir = tempdir().unwrap();
+        let fixture_path = build_fixture(fixture_dir.path(), &happy_spec()).await;
+        let book = read(&fixture_path).await.unwrap();
+        let plan = build_default_plan(hh_id.clone(), crate::id::new_ulid(), &book, crate::id::new_ulid).unwrap();
+
+        let first = commit(&pool, &plan, 100).await.unwrap();
+        assert_eq!(first.transactions_committed, 2);
+
+        // Second commit needs fresh account ulids, otherwise PK collision.
+        let plan2 = build_default_plan(hh_id.clone(), crate::id::new_ulid(), &book, crate::id::new_ulid).unwrap();
+        let second = commit(&pool, &plan2, 200).await.unwrap();
+        assert_eq!(second.transactions_committed, 0);
+        assert_eq!(second.transactions_skipped, 2);
+    }
 }
