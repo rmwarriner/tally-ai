@@ -11,8 +11,8 @@ pub async fn commit(pool: &SqlitePool, plan: &ImportPlan, now_ms: i64) -> Result
     // Insert mapped accounts
     for m in &plan.account_mappings {
         sqlx::query(
-            "INSERT INTO accounts (id, household_id, parent_id, name, type, normal_balance, is_placeholder, currency, created_at, import_id) \
-             VALUES (?, ?, ?, ?, ?, ?, 0, 'USD', ?, ?)"
+            "INSERT INTO accounts (id, household_id, parent_id, name, type, normal_balance, is_placeholder, currency, created_at, import_id, gnc_guid) \
+             VALUES (?, ?, ?, ?, ?, ?, 0, 'USD', ?, ?, ?)"
         )
         .bind(&m.tally_account_id)
         .bind(&plan.household_id)
@@ -22,6 +22,7 @@ pub async fn commit(pool: &SqlitePool, plan: &ImportPlan, now_ms: i64) -> Result
         .bind(normal_balance_str(m.tally_normal_balance))
         .bind(now_ms)
         .bind(&plan.import_id)
+        .bind(&m.gnc_guid)
         .execute(&mut *tx)
         .await?;
     }
@@ -179,6 +180,12 @@ mod tests {
         let (txn_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transactions WHERE household_id = ? AND source = 'import'")
             .bind(&hh_id).fetch_one(&pool).await.unwrap();
         assert_eq!(txn_count, 2);
+
+        let (checking_guid,): (String,) = sqlx::query_as(
+            "SELECT gnc_guid FROM accounts WHERE household_id = ? AND name = 'Checking'",
+        )
+        .bind(&hh_id).fetch_one(&pool).await.unwrap();
+        assert_eq!(checking_guid, "acc_checking");
     }
 
     #[tokio::test]
