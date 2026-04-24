@@ -961,6 +961,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_migration_0007_adds_gnc_guid() {
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_0007.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool).await.expect("Migrations should run");
+
+        let acc_schema: (String,) = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='accounts'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("accounts table should exist");
+        assert!(acc_schema.0.contains("gnc_guid"), "accounts.gnc_guid column missing");
+
+        let idx_sql: Option<(String,)> = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_accounts_gnc_guid'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("Should query index");
+        let idx = idx_sql.expect("idx_accounts_gnc_guid should exist");
+        assert!(idx.0.contains("gnc_guid IS NOT NULL"), "index must be partial");
+    }
+
+    #[tokio::test]
     async fn test_envelope_spent_ignores_pending_transactions() {
         use std::time::{SystemTime, UNIX_EPOCH};
 
