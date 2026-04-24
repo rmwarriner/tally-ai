@@ -22,6 +22,21 @@ Each decision follows this format:
 
 ## Active Decisions
 
+### 2026-04-24 — Persist GnuCash GUID on imported accounts
+
+**Decision**: Imported accounts carry their GnuCash GUID in a new `accounts.gnc_guid` column (migration 0007). The reconciler queries Tally rows by this GUID rather than matching on account name.
+
+**Rationale**: Leaf-name matching was unsound — a GnuCash book legitimately can have two accounts with the same leaf name under different parents (e.g. `Assets:Cash:Savings` vs `Investments:Savings`). GUID is canonical and index-friendly.
+
+**Status**: Accepted
+
+**Consequences**:
+- Reconcile performance is O(n log n) via the `idx_accounts_gnc_guid` partial index.
+- Manual account creation (non-imported) leaves `gnc_guid = NULL`; the partial index keeps the table scan shape unchanged for those rows.
+- If a future ticket adds "re-import" semantics, it has a clean key to match on.
+
+---
+
 ### 2026-04-17 — Money as Integer Cents
 
 **Decision**: All monetary amounts are stored as INTEGER cents in the database, never FLOAT or REAL.
