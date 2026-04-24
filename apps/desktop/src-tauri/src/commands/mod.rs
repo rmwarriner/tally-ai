@@ -754,3 +754,66 @@ pub async fn rollback_gnucash_import(
         .await
         .map_err(|e| e.to_string())
 }
+
+#[derive(Deserialize)]
+pub struct ReconcileArgs {
+    pub import_id: String,
+    pub path: String,
+}
+
+#[tauri::command]
+pub async fn reconcile_gnucash_import(
+    state: State<'_, AppState>,
+    args: ReconcileArgs,
+) -> Result<crate::core::import::gnucash::reconcile::BalanceReportArtifact, String> {
+    use crate::core::import::gnucash::{reader, reconcile, AccountMapping, ImportPlan};
+    use std::path::Path;
+
+    let pool_opt = state.pool.lock().expect("pool").clone();
+    let pool = pool_opt.ok_or_else(|| "No database open".to_string())?;
+    let household_id = state.household_id.lock().expect("hh").clone()
+        .ok_or_else(|| "No household configured".to_string())?;
+
+    let book = reader::read(Path::new(&args.path))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Rebuild minimal AccountMapping set from accounts table (rows stamped with this import_id).
+    #[derive(sqlx::FromRow)]
+    struct Row { id: String, name: String }
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT id, name FROM accounts WHERE household_id = ? AND import_id = ?",
+    )
+    .bind(&household_id)
+    .bind(&args.import_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Match Tally account_name to GnuCash account.name. Duplicate-name blocked during mapping.
+    let name_to_gnc: std::collections::HashMap<&str, &crate::core::import::gnucash::GncAccount> =
+        book.accounts.iter().map(|a| (a.name.as_str(), a)).collect();
+
+    let account_mappings: Vec<AccountMapping> = rows.iter().filter_map(|r| {
+        name_to_gnc.get(r.name.as_str()).map(|ga| AccountMapping {
+            gnc_guid: ga.guid.clone(),
+            gnc_full_name: ga.full_name.clone(),
+            tally_account_id: r.id.clone(),
+            tally_name: r.name.clone(),
+            tally_parent_id: None,
+            tally_type: crate::core::import::gnucash::AccountType::Asset, // unused by reconcile
+            tally_normal_balance: crate::core::import::gnucash::NormalBalance::Debit,
+        })
+    }).collect();
+
+    let plan = ImportPlan {
+        household_id,
+        import_id: args.import_id,
+        account_mappings,
+        transactions: vec![], // unused by reconcile
+    };
+
+    reconcile::reconcile(&pool, &plan, &book)
+        .await
+        .map_err(|e| e.to_string())
+}
