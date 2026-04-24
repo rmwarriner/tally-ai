@@ -1,5 +1,5 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import type { GnuCashPreview, ImportPlan, ImportReceipt, MappingEdit, ImportAccountType, NormalBalance } from "@tally/core-types";
 import type { SetupCardVariant } from "../components/onboarding/SetupCard";
@@ -52,10 +52,16 @@ function isNegative(text: string): boolean {
   return /^(no|nope|done|none|that'?s? (all|it)|finished|stop|n)$/i.test(text.trim());
 }
 
+function isValidAccountName(name: string): boolean {
+  const trimmed = name.trim();
+  return trimmed.length > 2 && !/^(a|an|the)$/i.test(trimmed);
+}
+
 function parseMappingEdit(text: string): MappingEdit | null {
   const changeType = text.match(/make\s+(\S+(?:\s+\S+)*?)\s+(?:an?\s+)?(asset|liability|income|expense|equity)\b/i);
   if (changeType) {
     const [, name, type] = changeType;
+    if (!isValidAccountName(name)) return null;
     const new_type = type.toLowerCase() as ImportAccountType;
     const new_normal_balance: NormalBalance =
       new_type === "asset" || new_type === "expense" ? "debit" : "credit";
@@ -64,6 +70,7 @@ function parseMappingEdit(text: string): MappingEdit | null {
   const rename = text.match(/rename\s+(\S+(?:\s+\S+)*?)\s+to\s+(.+)/i);
   if (rename) {
     const [, name, newName] = rename;
+    if (!isValidAccountName(name)) return null;
     return { kind: "rename", gnc_full_name: name.trim(), new_tally_name: newName.trim() };
   }
   return null;
@@ -71,11 +78,6 @@ function parseMappingEdit(text: string): MappingEdit | null {
 
 export function buildOnboardingHandler(deps: OnboardingDeps) {
   const store = useOnboardingStore;
-
-  // GnuCash import state — stashed between phases (TODO(T-073): pickedPath read by committer)
-  const gnucashState = {
-    pickedPath: null as string | null,
-  };
 
   async function checkAndStart(): Promise<void> {
     const exists = await deps.invoke<boolean>("check_setup_status", {});
@@ -422,7 +424,7 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
       // Stay at gnucash_import_pick_file
       return;
     }
-    gnucashState.pickedPath = path;
+    store.getState().setGnuCashPickedPath(path);
     const plan = await deps.gnucashBuildDefaultPlan(path);
     deps.addGnuCashMappingMessage(plan);
     store.getState().setPhase("gnucash_import_mapping");
@@ -430,7 +432,9 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
 
   async function handleConfirmMapping(): Promise<void> {
     store.getState().setPhase("gnucash_import_committing");
-    await deps.commitGnuCashImport();
+    const receipt = await deps.commitGnuCashImport();
+    store.getState().setGnuCashImportId(receipt.import_id);
+    deps.addSystemMessage("Import committed. Checking balances against GnuCash…", "info");
     store.getState().setPhase("gnucash_import_reconciling");
     // TODO(phase2): Wire reconciliation in T-074
   }
@@ -439,7 +443,7 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
     return store.getState().phase;
   }
 
-  return { checkAndStart, handleInput, handleFilePicked, handleConfirmMapping, phase, gnucashState };
+  return { checkAndStart, handleInput, handleFilePicked, handleConfirmMapping, phase };
 }
 
 export function useOnboardingEngine() {
@@ -450,38 +454,61 @@ export function useOnboardingEngine() {
   const phase = useOnboardingStore((s) => s.phase);
   const invalidateSidebar = useInvalidateSidebar();
 
-  const deps: OnboardingDeps = {
-    addSystemMessage,
-    addSetupCard,
-    addHandoffMessage,
-    addGnuCashMappingMessage,
-    invoke: tauriInvoke,
-    invalidateSidebar,
-    readGnuCashFile: (path: string) =>
-      tauriInvoke<GnuCashPreview>("read_gnucash_file", { path }),
-    gnucashBuildDefaultPlan: (path: string) =>
-      tauriInvoke<ImportPlan>("gnucash_build_default_plan", { path }),
-    gnucashApplyMappingEdit: (edit: MappingEdit) =>
-      tauriInvoke<ImportPlan>("gnucash_apply_mapping_edit", { edit }),
-    commitGnuCashImport: () =>
-      tauriInvoke<ImportReceipt>("gnucash_commit_import", {}),
-  };
-
-  const handler = buildOnboardingHandler(deps);
-
-  useEffect(() => {
-    void handler.checkAndStart();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleInput = useCallback(
-    (text: string) => handler.handleInput(text),
-    // deps change reference each render but behavior is stable — rebuild handler on each call is fine
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const readGnuCashFile = useCallback(
+    (path: string) => tauriInvoke<GnuCashPreview>("read_gnucash_file", { path }),
+    [],
+  );
+  const gnucashBuildDefaultPlan = useCallback(
+    (path: string) => tauriInvoke<ImportPlan>("gnucash_build_default_plan", { path }),
+    [],
+  );
+  const gnucashApplyMappingEdit = useCallback(
+    (edit: MappingEdit) => tauriInvoke<ImportPlan>("gnucash_apply_mapping_edit", { edit }),
+    [],
+  );
+  const commitGnuCashImport = useCallback(
+    () => tauriInvoke<ImportReceipt>("gnucash_commit_import", {}),
     [],
   );
 
+  const deps: OnboardingDeps = useMemo(
+    () => ({
+      addSystemMessage,
+      addSetupCard,
+      addHandoffMessage,
+      addGnuCashMappingMessage,
+      invoke: tauriInvoke,
+      invalidateSidebar,
+      readGnuCashFile,
+      gnucashBuildDefaultPlan,
+      gnucashApplyMappingEdit,
+      commitGnuCashImport,
+    }),
+    [
+      addSystemMessage,
+      addSetupCard,
+      addHandoffMessage,
+      addGnuCashMappingMessage,
+      invalidateSidebar,
+      readGnuCashFile,
+      gnucashBuildDefaultPlan,
+      gnucashApplyMappingEdit,
+      commitGnuCashImport,
+    ],
+  );
+
+  const handler = useMemo(() => buildOnboardingHandler(deps), [deps]);
+
+  useEffect(() => {
+    void handler.checkAndStart();
+    // Run only once on mount — handler identity is stable via useMemo
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return {
     isActive: phase !== "complete",
-    handleInput,
+    handleInput: handler.handleInput,
+    handleFilePicked: handler.handleFilePicked,
+    handleConfirmMapping: handler.handleConfirmMapping,
   };
 }

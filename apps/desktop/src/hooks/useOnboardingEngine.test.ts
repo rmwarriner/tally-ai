@@ -481,6 +481,36 @@ describe("GnuCash migration branch — Task 15: intent detection", () => {
   });
 });
 
+describe("GnuCash import store state persistence", () => {
+  beforeEach(() => {
+    useOnboardingStore.getState().setPhase("path_select");
+  });
+
+  it("gnucashPickedPath is set in store after handleFilePicked", async () => {
+    const deps = makeDeps();
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    expect(useOnboardingStore.getState().gnucashPickedPath).toBe("/tmp/book.gnucash");
+  });
+
+  it("state persists across a simulated re-render (two handlers from same store)", async () => {
+    const deps = makeDeps();
+    // First handler picks the file
+    const handler1 = buildOnboardingHandler(deps);
+    await handler1.handleInput("migrate from GnuCash");
+    await handler1.handleFilePicked("/tmp/book.gnucash");
+    expect(useOnboardingStore.getState().gnucashPickedPath).toBe("/tmp/book.gnucash");
+    // Simulate re-render: construct a fresh handler from the same store
+    const handler2 = buildOnboardingHandler(deps);
+    // The path should still be in the store
+    expect(useOnboardingStore.getState().gnucashPickedPath).toBe("/tmp/book.gnucash");
+    // And the second handler can confirm the mapping (store phase is gnucash_import_mapping)
+    await handler2.handleConfirmMapping();
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_reconciling");
+  });
+});
+
 describe("GnuCash migration branch — Task 16: file picker flow", () => {
   beforeEach(() => {
     useOnboardingStore.getState().setPhase("path_select");
@@ -605,6 +635,42 @@ describe("GnuCash migration branch — Task 18: mapping-edit loop", () => {
     await handler.handleConfirmMapping();
     expect(commit).toHaveBeenCalled();
     expect(handler.phase()).toBe("gnucash_import_reconciling");
+  });
+
+  it("emits a system message after successful commit", async () => {
+    const addSystemMessage = vi.fn();
+    const { handler } = await setupMappingPhase({ addSystemMessage });
+    await handler.handleConfirmMapping();
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Import committed"),
+      "info",
+    );
+  });
+
+  it("stores the import_id in the onboarding store after commit", async () => {
+    const commit = vi.fn().mockResolvedValue({
+      import_id: "imp-42",
+      accounts_created: 1,
+      transactions_committed: 5,
+      transactions_skipped: 0,
+    });
+    const { handler } = await setupMappingPhase({ commitGnuCashImport: commit });
+    await handler.handleConfirmMapping();
+    expect(useOnboardingStore.getState().gnucashImportId).toBe("imp-42");
+  });
+
+  it("rejects article-only names like 'make an asset'", async () => {
+    const applyEdit = vi.fn().mockResolvedValue(MOCK_PLAN);
+    const addSystemMessage = vi.fn();
+    const { handler } = await setupMappingPhase({
+      gnucashApplyMappingEdit: applyEdit,
+      addSystemMessage,
+    });
+    await handler.handleInput("make an asset");
+    expect(applyEdit).not.toHaveBeenCalled();
+    expect(addSystemMessage).toHaveBeenCalledWith(expect.stringContaining("make"), "info");
+    await handler.handleInput("make a liability");
+    expect(applyEdit).not.toHaveBeenCalled();
   });
 });
 

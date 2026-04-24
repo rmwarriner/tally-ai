@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { useCommitProposal } from "../../hooks/useCommitProposal";
+import { useChatStore } from "../../stores/chatStore";
 import { ArtifactCard } from "../artifacts/ArtifactCard";
 import { GnuCashMappingCard } from "../artifacts/GnuCashMappingCard";
 import { HandoffMessage } from "../onboarding/HandoffMessage";
@@ -17,6 +18,8 @@ import styles from "./MessageList.module.css";
 interface MessageListProps {
   messages: ChatMessage[];
   onPromptClick?: (prompt: string) => void;
+  onSubmitGnuCashPath?: (path: string) => void;
+  onConfirmMapping?: () => void;
 }
 
 interface TransactionMessageProps {
@@ -88,7 +91,15 @@ function formatDateLabel(ts: number, now: Date): string {
   }).format(messageDate);
 }
 
-function renderMessage(message: ChatMessage, onPromptClick?: (prompt: string) => void) {
+interface RenderOptions {
+  onPromptClick?: (prompt: string) => void;
+  onSubmitGnuCashPath?: (path: string) => void;
+  onConfirmMapping?: () => void;
+  addSystemMessage: (text: string, tone?: "info" | "error") => void;
+}
+
+function renderMessage(message: ChatMessage, opts: RenderOptions) {
+  const { onPromptClick, onSubmitGnuCashPath, onConfirmMapping, addSystemMessage } = opts;
   switch (message.kind) {
     case "user":
       return <UserMessage text={message.text} />;
@@ -121,7 +132,12 @@ function renderMessage(message: ChatMessage, onPromptClick?: (prompt: string) =>
       );
     case "setup_card":
       return (
-        <SetupCard variant={message.variant} title={message.title} detail={message.detail} />
+        <SetupCard
+          variant={message.variant}
+          title={message.title}
+          detail={message.detail}
+          onSubmitGnuCashPath={onSubmitGnuCashPath}
+        />
       );
     case "handoff":
       return (
@@ -134,14 +150,16 @@ function renderMessage(message: ChatMessage, onPromptClick?: (prompt: string) =>
         />
       );
     case "gnucash_mapping":
-      // onConfirm and onRequestEdit are no-ops in the chat renderer;
-      // the onboarding engine owns the phase transition via handleConfirmMapping.
-      // TODO(phase2): Wire confirmMapping / requestEdit callbacks from onboarding context.
       return (
         <GnuCashMappingCard
           plan={message.plan}
-          onConfirm={() => undefined}
-          onRequestEdit={() => undefined}
+          onConfirm={onConfirmMapping ?? (() => undefined)}
+          onRequestEdit={() => {
+            addSystemMessage(
+              "Type 'make <account> a <type>' or 'rename <account> to <new name>' to edit the mapping.",
+              "info",
+            );
+          }}
         />
       );
     default:
@@ -149,9 +167,17 @@ function renderMessage(message: ChatMessage, onPromptClick?: (prompt: string) =>
   }
 }
 
-export function MessageList({ messages, onPromptClick }: MessageListProps) {
+export function MessageList({ messages, onPromptClick, onSubmitGnuCashPath, onConfirmMapping }: MessageListProps) {
+  const addSystemMessage = useChatStore((s) => s.addSystemMessage);
   const sorted = [...messages].sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id));
   const now = new Date();
+
+  const opts: RenderOptions = {
+    onPromptClick,
+    onSubmitGnuCashPath,
+    onConfirmMapping,
+    addSystemMessage,
+  };
 
   let lastDateKey: string | null = null;
 
@@ -165,7 +191,7 @@ export function MessageList({ messages, onPromptClick }: MessageListProps) {
         return (
           <div key={message.id} className={styles.messageBlock}>
             {showSeparator ? <DateSeparator label={formatDateLabel(message.ts, now)} /> : null}
-            {renderMessage(message, onPromptClick)}
+            {renderMessage(message, opts)}
           </div>
         );
       })}
