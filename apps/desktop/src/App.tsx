@@ -58,6 +58,8 @@ export default function App() {
             onPromptClick={onSend}
             onSubmitGnuCashPath={onboarding.handleFilePicked}
             onConfirmMapping={onboarding.handleConfirmMapping}
+            onAcceptReconcile={onboarding.handleAcceptReconcile}
+            onRollbackReconcile={onboarding.handleRollbackReconcile}
           />
           <InputBar onSend={onSend} isStreaming={false} />
         </main>

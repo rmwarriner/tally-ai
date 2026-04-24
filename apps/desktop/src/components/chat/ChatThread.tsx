@@ -16,9 +16,11 @@ interface ChatThreadProps {
   onPromptClick?: (prompt: string) => void;
   onSubmitGnuCashPath?: (path: string) => void;
   onConfirmMapping?: () => void;
+  onAcceptReconcile?: () => void;
+  onRollbackReconcile?: () => void;
 }
 
-export function ChatThread({ onPromptClick, onSubmitGnuCashPath, onConfirmMapping }: ChatThreadProps = {}) {
+export function ChatThread({ onPromptClick, onSubmitGnuCashPath, onConfirmMapping, onAcceptReconcile, onRollbackReconcile }: ChatThreadProps = {}) {
   const threadRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const previousNewestMessageIdRef = useRef<string | null>(null);
@@ -135,6 +137,8 @@ export function ChatThread({ onPromptClick, onSubmitGnuCashPath, onConfirmMappin
             onPromptClick={onPromptClick}
             onSubmitGnuCashPath={onSubmitGnuCashPath}
             onConfirmMapping={onConfirmMapping}
+            onAcceptReconcile={onAcceptReconcile}
+            onRollbackReconcile={onRollbackReconcile}
           />
         ) : (
           <p className={styles.placeholder}>No messages yet.</p>

@@ -40,12 +40,20 @@ const MOCK_PLAN: ImportPlan = {
   transactions: [],
 };
 
+const MOCK_RECONCILE_REPORT = {
+  total_mismatches: 0,
+  rows: [
+    { account_name: "Checking", tally_cents: 95000, gnucash_cents: 95000, matches: true },
+  ],
+};
+
 function makeDeps(overrides: Partial<OnboardingDeps> = {}): OnboardingDeps {
   return {
     addSystemMessage: vi.fn(),
     addSetupCard: vi.fn(),
     addHandoffMessage: vi.fn(),
     addGnuCashMappingMessage: vi.fn(),
+    addGnuCashReconcileMessage: vi.fn(),
     invoke: mockInvoke,
     invalidateSidebar: vi.fn(),
     readGnuCashFile: vi.fn().mockResolvedValue(MOCK_PREVIEW),
@@ -57,6 +65,8 @@ function makeDeps(overrides: Partial<OnboardingDeps> = {}): OnboardingDeps {
       transactions_committed: 2,
       transactions_skipped: 0,
     }),
+    reconcileGnuCashImport: vi.fn().mockResolvedValue(MOCK_RECONCILE_REPORT),
+    rollbackGnuCashImport: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -671,6 +681,78 @@ describe("GnuCash migration branch — Task 18: mapping-edit loop", () => {
     expect(addSystemMessage).toHaveBeenCalledWith(expect.stringContaining("make"), "info");
     await handler.handleInput("make a liability");
     expect(applyEdit).not.toHaveBeenCalled();
+  });
+});
+
+describe("GnuCash reconcile phase", () => {
+  async function setupThroughCommit(overrides: Partial<OnboardingDeps> = {}) {
+    const deps = makeDeps(overrides);
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    await handler.handleConfirmMapping();
+    return { deps, handler };
+  }
+
+  it("after commit, fetches balance report and renders reconcile artifact", async () => {
+    const reconcile = vi.fn().mockResolvedValue(MOCK_RECONCILE_REPORT);
+    const addReconcileMessage = vi.fn();
+    const { handler } = await setupThroughCommit({
+      reconcileGnuCashImport: reconcile,
+      addGnuCashReconcileMessage: addReconcileMessage,
+    });
+    expect(reconcile).toHaveBeenCalledWith(expect.any(String), expect.any(String));
+    expect(addReconcileMessage).toHaveBeenCalledWith(MOCK_RECONCILE_REPORT);
+    expect(handler.phase()).toBe("gnucash_import_reconciling");
+  });
+
+  it("reconcileGnuCashImport is called with correct importId and path", async () => {
+    const reconcile = vi.fn().mockResolvedValue(MOCK_RECONCILE_REPORT);
+    const commit = vi.fn().mockResolvedValue({
+      import_id: "imp-reconcile-test",
+      accounts_created: 1,
+      transactions_committed: 1,
+      transactions_skipped: 0,
+    });
+    await setupThroughCommit({ commitGnuCashImport: commit, reconcileGnuCashImport: reconcile });
+    expect(reconcile).toHaveBeenCalledWith("imp-reconcile-test", "/tmp/book.gnucash");
+  });
+
+  it("accepting the report transitions to gnucash_import_done and emits handoff", async () => {
+    const addHandoffMessage = vi.fn();
+    const { handler } = await setupThroughCommit({ addHandoffMessage });
+    await handler.handleAcceptReconcile();
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_done");
+    expect(addHandoffMessage).toHaveBeenCalled();
+  });
+
+  it("rejecting rolls back and returns to file picker", async () => {
+    const rollback = vi.fn().mockResolvedValue(undefined);
+    const commit = vi.fn().mockResolvedValue({
+      import_id: "imp_1",
+      accounts_created: 1,
+      transactions_committed: 1,
+      transactions_skipped: 0,
+    });
+    const { handler } = await setupThroughCommit({
+      commitGnuCashImport: commit,
+      rollbackGnuCashImport: rollback,
+    });
+    await handler.handleRollbackReconcile();
+    expect(rollback).toHaveBeenCalledWith("imp_1");
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_pick_file");
+    expect(useOnboardingStore.getState().gnucashImportId).toBe(null);
+    expect(useOnboardingStore.getState().gnucashPickedPath).toBe(null);
+  });
+
+  it("rollback emits a system message guiding the user to retry", async () => {
+    const addSystemMessage = vi.fn();
+    const { handler } = await setupThroughCommit({ addSystemMessage });
+    await handler.handleRollbackReconcile();
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("rolled back"),
+      "info",
+    );
   });
 });
 

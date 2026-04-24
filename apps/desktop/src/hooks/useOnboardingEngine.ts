@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo } from "react";
 
 import type { GnuCashPreview, ImportPlan, ImportReceipt, MappingEdit, ImportAccountType, NormalBalance } from "@tally/core-types";
 import type { SetupCardVariant } from "../components/onboarding/SetupCard";
+import type { GnuCashReconcileReport } from "../components/artifacts/GnuCashReconcileCard";
 import { useChatStore } from "../stores/chatStore";
 import { useOnboardingStore } from "../stores/onboardingStore";
 import type { FreshStep, MigrationStep } from "../stores/onboardingStore";
@@ -18,12 +19,15 @@ export interface OnboardingDeps {
     starterPrompts: string[],
   ) => void;
   addGnuCashMappingMessage: (plan: ImportPlan) => void;
+  addGnuCashReconcileMessage: (report: GnuCashReconcileReport) => void;
   invoke: typeof tauriInvoke;
   invalidateSidebar: () => void | Promise<void>;
   readGnuCashFile: (path: string) => Promise<GnuCashPreview>;
   gnucashBuildDefaultPlan: (path: string) => Promise<ImportPlan>;
   gnucashApplyMappingEdit: (edit: MappingEdit) => Promise<ImportPlan>;
   commitGnuCashImport: () => Promise<ImportReceipt>;
+  reconcileGnuCashImport: (importId: string, path: string) => Promise<GnuCashReconcileReport>;
+  rollbackGnuCashImport: (importId: string) => Promise<void>;
 }
 
 const STARTER_PROMPTS = [
@@ -436,14 +440,41 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
     store.getState().setGnuCashImportId(receipt.import_id);
     deps.addSystemMessage("Import committed. Checking balances against GnuCash…", "info");
     store.getState().setPhase("gnucash_import_reconciling");
-    // TODO(phase2): Wire reconciliation in T-074
+    const pickedPath = store.getState().gnucashPickedPath ?? "";
+    const report = await deps.reconcileGnuCashImport(receipt.import_id, pickedPath);
+    deps.addGnuCashReconcileMessage(report);
+  }
+
+  async function handleAcceptReconcile(): Promise<void> {
+    const { householdName, accounts, envelopes } = store.getState().draft;
+    deps.addHandoffMessage(
+      householdName || "Your household",
+      accounts.length,
+      envelopes.length,
+      STARTER_PROMPTS,
+    );
+    store.getState().setPhase("gnucash_import_done");
+  }
+
+  async function handleRollbackReconcile(): Promise<void> {
+    const importId = store.getState().gnucashImportId;
+    if (importId) {
+      await deps.rollbackGnuCashImport(importId);
+    }
+    store.getState().setGnuCashImportId(null);
+    store.getState().setGnuCashPickedPath(null);
+    deps.addSystemMessage(
+      "Import rolled back. Pick a GnuCash file to try again, or skip migration.",
+      "info",
+    );
+    store.getState().setPhase("gnucash_import_pick_file");
   }
 
   function phase() {
     return store.getState().phase;
   }
 
-  return { checkAndStart, handleInput, handleFilePicked, handleConfirmMapping, phase };
+  return { checkAndStart, handleInput, handleFilePicked, handleConfirmMapping, handleAcceptReconcile, handleRollbackReconcile, phase };
 }
 
 export function useOnboardingEngine() {
@@ -451,6 +482,7 @@ export function useOnboardingEngine() {
   const addSetupCard = useChatStore((s) => s.addSetupCard);
   const addHandoffMessage = useChatStore((s) => s.addHandoffMessage);
   const addGnuCashMappingMessage = useChatStore((s) => s.addGnuCashMappingMessage);
+  const addGnuCashReconcileMessage = useChatStore((s) => s.addGnuCashReconcileMessage);
   const phase = useOnboardingStore((s) => s.phase);
   const invalidateSidebar = useInvalidateSidebar();
 
@@ -470,6 +502,15 @@ export function useOnboardingEngine() {
     () => tauriInvoke<ImportReceipt>("gnucash_commit_import", {}),
     [],
   );
+  const reconcileGnuCashImport = useCallback(
+    (importId: string, path: string) =>
+      tauriInvoke<GnuCashReconcileReport>("reconcile_gnucash_import", { import_id: importId, path }),
+    [],
+  );
+  const rollbackGnuCashImport = useCallback(
+    (importId: string) => tauriInvoke<void>("rollback_gnucash_import", { import_id: importId }),
+    [],
+  );
 
   const deps: OnboardingDeps = useMemo(
     () => ({
@@ -477,23 +518,29 @@ export function useOnboardingEngine() {
       addSetupCard,
       addHandoffMessage,
       addGnuCashMappingMessage,
+      addGnuCashReconcileMessage,
       invoke: tauriInvoke,
       invalidateSidebar,
       readGnuCashFile,
       gnucashBuildDefaultPlan,
       gnucashApplyMappingEdit,
       commitGnuCashImport,
+      reconcileGnuCashImport,
+      rollbackGnuCashImport,
     }),
     [
       addSystemMessage,
       addSetupCard,
       addHandoffMessage,
       addGnuCashMappingMessage,
+      addGnuCashReconcileMessage,
       invalidateSidebar,
       readGnuCashFile,
       gnucashBuildDefaultPlan,
       gnucashApplyMappingEdit,
       commitGnuCashImport,
+      reconcileGnuCashImport,
+      rollbackGnuCashImport,
     ],
   );
 
@@ -510,5 +557,7 @@ export function useOnboardingEngine() {
     handleInput: handler.handleInput,
     handleFilePicked: handler.handleFilePicked,
     handleConfirmMapping: handler.handleConfirmMapping,
+    handleAcceptReconcile: handler.handleAcceptReconcile,
+    handleRollbackReconcile: handler.handleRollbackReconcile,
   };
 }
