@@ -12,16 +12,50 @@ import {
   buildOnboardingHandler,
   type OnboardingDeps,
 } from "./useOnboardingEngine";
+import type { GnuCashPreview, ImportPlan } from "@tally/core-types";
 
 const mockInvoke = vi.mocked(invoke);
+
+const MOCK_PREVIEW: GnuCashPreview = {
+  book_guid: "b1",
+  account_count: 3,
+  transaction_count: 2,
+  non_usd_accounts: [],
+};
+
+const MOCK_PLAN: ImportPlan = {
+  household_id: "hh",
+  import_id: "imp",
+  account_mappings: [
+    {
+      gnc_guid: "a",
+      gnc_full_name: "Checking",
+      tally_account_id: "u1",
+      tally_name: "Checking",
+      tally_parent_id: null,
+      tally_type: "asset",
+      tally_normal_balance: "debit",
+    },
+  ],
+  transactions: [],
+};
 
 function makeDeps(overrides: Partial<OnboardingDeps> = {}): OnboardingDeps {
   return {
     addSystemMessage: vi.fn(),
     addSetupCard: vi.fn(),
     addHandoffMessage: vi.fn(),
+    addGnuCashMappingMessage: vi.fn(),
     invoke: mockInvoke,
     invalidateSidebar: vi.fn(),
+    readGnuCashFile: vi.fn().mockResolvedValue(MOCK_PREVIEW),
+    gnucashBuildDefaultPlan: vi.fn().mockResolvedValue(MOCK_PLAN),
+    commitGnuCashImport: vi.fn().mockResolvedValue({
+      import_id: "imp",
+      accounts_created: 3,
+      transactions_committed: 2,
+      transactions_skipped: 0,
+    }),
     ...overrides,
   };
 }
@@ -446,6 +480,53 @@ describe("GnuCash migration branch — Task 15: intent detection", () => {
   });
 });
 
+describe("GnuCash migration branch — Task 16: file picker flow", () => {
+  beforeEach(() => {
+    useOnboardingStore.getState().setPhase("path_select");
+  });
+
+  it("after picking a valid USD book, transitions to mapping phase with default plan", async () => {
+    const addGnuCashMappingMessage = vi.fn();
+    const deps = makeDeps({ addGnuCashMappingMessage });
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    expect(deps.readGnuCashFile).toHaveBeenCalledWith("/tmp/book.gnucash");
+    expect(deps.gnucashBuildDefaultPlan).toHaveBeenCalledWith("/tmp/book.gnucash");
+    expect(addGnuCashMappingMessage).toHaveBeenCalledWith(MOCK_PLAN);
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_mapping");
+  });
+
+  it("rejects non-USD books with a hard-error system message and stays at pick_file phase", async () => {
+    const addSystemMessage = vi.fn();
+    const deps = makeDeps({
+      addSystemMessage,
+      readGnuCashFile: vi.fn().mockResolvedValue({
+        book_guid: "b1",
+        account_count: 2,
+        transaction_count: 0,
+        non_usd_accounts: ["Euro Savings"],
+      }),
+    });
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Euro Savings"),
+      "error",
+    );
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_pick_file");
+  });
+
+  it("phase() accessor returns current store phase", async () => {
+    const deps = makeDeps();
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    expect(handler.phase()).toBe("gnucash_import_mapping");
+  });
+});
+
 describe("sidebar invalidation", () => {
   it("calls invalidateSidebar after each DB write", async () => {
     const invalidateSidebar = vi.fn();
@@ -456,13 +537,10 @@ describe("sidebar invalidation", () => {
       .mockResolvedValueOnce(undefined)   // set_opening_balance (write, invalidate)
       .mockResolvedValueOnce("en_01");    // create_envelope (write, invalidate)
 
-    const handler = buildOnboardingHandler({
-      addSystemMessage: vi.fn(),
-      addSetupCard: vi.fn(),
-      addHandoffMessage: vi.fn(),
+    const handler = buildOnboardingHandler(makeDeps({
       invoke: mockInvokeLocal as never,
       invalidateSidebar,
-    });
+    }));
 
     await handler.checkAndStart();
     await handler.handleInput("fresh");

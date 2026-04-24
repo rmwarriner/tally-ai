@@ -4,6 +4,7 @@ import type {
 } from "./TransactionCard.types";
 
 import type { SetupCardVariant } from "../onboarding/SetupCard";
+import type { ImportPlan } from "@tally/core-types";
 
 export interface ProposedLine {
   account_id: string;
@@ -61,4 +62,10 @@ export type ChatMessage =
       accountCount: number;
       envelopeCount: number;
       starterPrompts: string[];
+    }
+  | {
+      kind: "gnucash_mapping";
+      id: string;
+      ts: number;
+      plan: ImportPlan;
     };

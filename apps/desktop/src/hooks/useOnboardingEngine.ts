@@ -1,6 +1,7 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect } from "react";
 
+import type { GnuCashPreview, ImportPlan, ImportReceipt } from "@tally/core-types";
 import type { SetupCardVariant } from "../components/onboarding/SetupCard";
 import { useChatStore } from "../stores/chatStore";
 import { useOnboardingStore } from "../stores/onboardingStore";
@@ -16,8 +17,12 @@ export interface OnboardingDeps {
     envelopeCount: number,
     starterPrompts: string[],
   ) => void;
+  addGnuCashMappingMessage: (plan: ImportPlan) => void;
   invoke: typeof tauriInvoke;
   invalidateSidebar: () => void | Promise<void>;
+  readGnuCashFile: (path: string) => Promise<GnuCashPreview>;
+  gnucashBuildDefaultPlan: (path: string) => Promise<ImportPlan>;
+  commitGnuCashImport: () => Promise<ImportReceipt>;
 }
 
 const STARTER_PROMPTS = [
@@ -48,6 +53,11 @@ function isNegative(text: string): boolean {
 
 export function buildOnboardingHandler(deps: OnboardingDeps) {
   const store = useOnboardingStore;
+
+  // GnuCash import state — stashed between phases (TODO(T-073): pickedPath read by committer)
+  const gnucashState = {
+    pickedPath: null as string | null,
+  };
 
   async function checkAndStart(): Promise<void> {
     const exists = await deps.invoke<boolean>("check_setup_status", {});
@@ -366,13 +376,35 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
     }
   }
 
-  return { checkAndStart, handleInput };
+  async function handleFilePicked(path: string): Promise<void> {
+    const preview = await deps.readGnuCashFile(path);
+    if (preview.non_usd_accounts.length > 0) {
+      const accountList = preview.non_usd_accounts.join(", ");
+      deps.addSystemMessage(
+        `Your book contains non-USD accounts (${accountList}). Only USD books are supported. Please export a USD-only book and try again.`,
+        "error",
+      );
+      // Stay at gnucash_import_pick_file
+      return;
+    }
+    gnucashState.pickedPath = path;
+    const plan = await deps.gnucashBuildDefaultPlan(path);
+    deps.addGnuCashMappingMessage(plan);
+    store.getState().setPhase("gnucash_import_mapping");
+  }
+
+  function phase() {
+    return store.getState().phase;
+  }
+
+  return { checkAndStart, handleInput, handleFilePicked, phase, gnucashState };
 }
 
 export function useOnboardingEngine() {
   const addSystemMessage = useChatStore((s) => s.addSystemMessage);
   const addSetupCard = useChatStore((s) => s.addSetupCard);
   const addHandoffMessage = useChatStore((s) => s.addHandoffMessage);
+  const addGnuCashMappingMessage = useChatStore((s) => s.addGnuCashMappingMessage);
   const phase = useOnboardingStore((s) => s.phase);
   const invalidateSidebar = useInvalidateSidebar();
 
@@ -380,8 +412,15 @@ export function useOnboardingEngine() {
     addSystemMessage,
     addSetupCard,
     addHandoffMessage,
+    addGnuCashMappingMessage,
     invoke: tauriInvoke,
     invalidateSidebar,
+    readGnuCashFile: (path: string) =>
+      tauriInvoke<GnuCashPreview>("read_gnucash_file", { path }),
+    gnucashBuildDefaultPlan: (path: string) =>
+      tauriInvoke<ImportPlan>("gnucash_build_default_plan", { path }),
+    commitGnuCashImport: () =>
+      tauriInvoke<ImportReceipt>("gnucash_commit_import", {}),
   };
 
   const handler = buildOnboardingHandler(deps);
