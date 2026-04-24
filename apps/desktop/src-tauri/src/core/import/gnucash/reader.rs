@@ -4,7 +4,8 @@
 //! Our reader normalizes every split to signed cents (denom=100 for USD).
 
 use super::{
-    GnuCashBook, GncAccount, GncAccountType, GncCommodity, GncSplit, GncTransaction, ImportError,
+    GnuCashBook, GncAccount, GncAccountType, GncCommodity, GncSplit, GncTransaction, GnuCashPreview,
+    ImportError,
 };
 use chrono::NaiveDateTime;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -38,6 +39,48 @@ pub async fn read(path: &Path) -> Result<GnuCashBook, ImportError> {
 
     check_splits_balance(&book)?;
     Ok(book)
+}
+
+/// Builds a lightweight preview without applying the splits-balance check.
+/// This is what `read_gnucash_file` returns so the onboarding UI can decide
+/// whether to proceed before we build a full ImportPlan.
+pub async fn preview(path: &Path) -> Result<GnuCashPreview, ImportError> {
+    let pool = open_readonly(path).await?;
+    if !is_gnucash_book(&pool).await {
+        pool.close().await;
+        return Err(ImportError::NotAGnuCashBook);
+    }
+
+    let book_guid: (String,) = sqlx::query_as("SELECT guid FROM books LIMIT 1")
+        .fetch_one(&pool)
+        .await?;
+
+    let commodities = load_commodities(&pool).await?;
+    let accounts = load_accounts(&pool).await?;
+    let (tx_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transactions")
+        .fetch_one(&pool)
+        .await?;
+    pool.close().await;
+
+    // A commodity is USD iff namespace='CURRENCY' AND mnemonic='USD'.
+    let usd_guids: std::collections::HashSet<&str> = commodities
+        .iter()
+        .filter(|c| c.namespace == "CURRENCY" && c.mnemonic == "USD")
+        .map(|c| c.guid.as_str())
+        .collect();
+
+    let non_usd: Vec<String> = accounts
+        .iter()
+        .filter(|a| !a.placeholder && !usd_guids.contains(a.commodity_guid.as_str()))
+        .map(|a| a.full_name.clone())
+        .collect();
+
+    Ok(GnuCashPreview {
+        book_guid: book_guid.0,
+        account_count: accounts.len() as u32,
+        transaction_count: tx_count as u32,
+        non_usd_accounts: non_usd,
+    })
 }
 
 async fn open_readonly(path: &Path) -> Result<SqlitePool, ImportError> {
@@ -296,5 +339,58 @@ mod tests {
         let book = read(&path).await.unwrap();
         let groc = book.accounts.iter().find(|a| a.name == "Groceries").unwrap();
         assert_eq!(groc.full_name, "Food:Groceries");
+    }
+
+    #[tokio::test]
+    async fn non_usd_account_flagged_in_preview() {
+        let dir = tempdir().unwrap();
+        let mut spec = happy_spec();
+        spec.book_guid = "book_eur".into();
+        spec.commodities.push(("cmdty_eur".into(), "CURRENCY".into(), "EUR".into()));
+        spec.accounts.push(super::super::test_fixtures::FixtureAccount {
+            guid: "acc_savings_eur".into(),
+            name: "Euro Savings".into(),
+            account_type: "BANK",
+            commodity_guid: "cmdty_eur".into(),
+            parent_guid: None,
+            placeholder: false,
+            hidden: false,
+        });
+        let path = build_fixture(dir.path(), &spec).await;
+
+        let preview_result = preview(&path).await.expect("preview should still succeed");
+        assert!(preview_result.non_usd_accounts.contains(&"Euro Savings".to_string()));
+        assert_eq!(preview_result.account_count, 4);
+    }
+
+    #[tokio::test]
+    async fn stock_commodity_flagged_as_non_usd() {
+        let dir = tempdir().unwrap();
+        let mut spec = happy_spec();
+        spec.book_guid = "book_stock".into();
+        spec.commodities.push(("cmdty_aapl".into(), "NASDAQ".into(), "AAPL".into()));
+        spec.accounts.push(super::super::test_fixtures::FixtureAccount {
+            guid: "acc_aapl".into(),
+            name: "AAPL".into(),
+            account_type: "STOCK",
+            commodity_guid: "cmdty_aapl".into(),
+            parent_guid: None,
+            placeholder: false,
+            hidden: false,
+        });
+        let path = build_fixture(dir.path(), &spec).await;
+
+        let preview_result = preview(&path).await.unwrap();
+        assert!(preview_result.non_usd_accounts.contains(&"AAPL".to_string()));
+    }
+
+    #[tokio::test]
+    async fn happy_preview_has_empty_non_usd_list() {
+        let dir = tempdir().unwrap();
+        let path = build_fixture(dir.path(), &happy_spec()).await;
+        let p = preview(&path).await.unwrap();
+        assert!(p.non_usd_accounts.is_empty());
+        assert_eq!(p.transaction_count, 2);
+        assert_eq!(p.account_count, 3);
     }
 }
