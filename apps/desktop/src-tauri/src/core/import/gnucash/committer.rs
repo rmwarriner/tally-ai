@@ -88,6 +88,31 @@ pub async fn commit(pool: &SqlitePool, plan: &ImportPlan, now_ms: i64) -> Result
     })
 }
 
+pub async fn rollback(pool: &SqlitePool, import_id: &str) -> Result<(), ImportError> {
+    let mut conn = pool.acquire().await?;
+    let mut tx = conn.begin().await?;
+
+    sqlx::query(
+        "DELETE FROM journal_lines WHERE transaction_id IN (SELECT id FROM transactions WHERE import_id = ?)",
+    )
+    .bind(import_id)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query("DELETE FROM transactions WHERE import_id = ?")
+        .bind(import_id)
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query("DELETE FROM accounts WHERE import_id = ?")
+        .bind(import_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
 fn account_type_str(t: AccountType) -> &'static str {
     match t {
         AccountType::Asset => "asset",
@@ -195,5 +220,30 @@ mod tests {
         let (txn_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transactions WHERE household_id = ?")
             .bind(&hh_id).fetch_one(&pool).await.unwrap();
         assert_eq!(txn_count, 0, "transactions must be rolled back on failure");
+    }
+
+    #[tokio::test]
+    async fn rollback_deletes_every_row_stamped_with_import_id() {
+        let (_dir, pool, hh_id) = setup_db().await;
+        let fixture_dir = tempdir().unwrap();
+        let fixture_path = build_fixture(fixture_dir.path(), &happy_spec()).await;
+        let book = read(&fixture_path).await.unwrap();
+        let plan = build_default_plan(hh_id.clone(), crate::id::new_ulid(), &book, crate::id::new_ulid).unwrap();
+        commit(&pool, &plan, 100).await.unwrap();
+
+        rollback(&pool, &plan.import_id).await.unwrap();
+
+        let (acc_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM accounts WHERE import_id = ?")
+            .bind(&plan.import_id).fetch_one(&pool).await.unwrap();
+        assert_eq!(acc_count, 0);
+
+        let (txn_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transactions WHERE import_id = ?")
+            .bind(&plan.import_id).fetch_one(&pool).await.unwrap();
+        assert_eq!(txn_count, 0);
+
+        let (jl_orphans,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM journal_lines jl LEFT JOIN transactions t ON t.id = jl.transaction_id WHERE t.id IS NULL"
+        ).fetch_one(&pool).await.unwrap();
+        assert_eq!(jl_orphans, 0, "no orphaned journal lines");
     }
 }
