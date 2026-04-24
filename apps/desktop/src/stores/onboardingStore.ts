@@ -3,7 +3,17 @@ import { create } from "zustand";
 // Inline subset of AccountType to avoid pulling in the workspace package
 type AccountType = "asset" | "liability" | "income" | "expense" | "equity";
 
-export type OnboardingPhase = "checking" | "path_select" | "fresh_start" | "migration" | "complete";
+export type OnboardingPhase =
+  | "checking"
+  | "path_select"
+  | "fresh_start"
+  | "migration"
+  | "gnucash_import_pick_file"
+  | "gnucash_import_mapping"
+  | "gnucash_import_committing"
+  | "gnucash_import_reconciling"
+  | "gnucash_import_done"
+  | "complete";
 
 export type FreshStep =
   | "welcome"

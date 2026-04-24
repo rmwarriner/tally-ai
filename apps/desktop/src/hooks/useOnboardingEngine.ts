@@ -315,6 +315,19 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
     switch (phase) {
       case "path_select": {
         const lower = text.toLowerCase();
+        if (/migrate.*gnucash|gnucash.*migrat|gnucash/i.test(text)) {
+          store.getState().setPhase("gnucash_import_pick_file");
+          deps.addSetupCard(
+            "gnucash_file_picker",
+            "Import from GnuCash",
+            "Select your GnuCash file to get started",
+          );
+          deps.addSystemMessage(
+            "Great! Please select your GnuCash file using the file picker above.",
+            "info",
+          );
+          return;
+        }
         if (lower.includes("fresh") || lower.includes("start")) {
           store.getState().setPhase("fresh_start");
           deps.addSystemMessage(
@@ -342,6 +355,11 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
         await handleMigrationStep(migrationStep, text);
         return;
 
+      case "gnucash_import_pick_file":
+      case "gnucash_import_mapping":
+      case "gnucash_import_committing":
+      case "gnucash_import_reconciling":
+      case "gnucash_import_done":
       case "checking":
       case "complete":
         return;

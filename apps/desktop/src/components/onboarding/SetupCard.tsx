@@ -4,7 +4,8 @@ export type SetupCardVariant =
   | "household_created"
   | "account_created"
   | "opening_balance"
-  | "envelope_created";
+  | "envelope_created"
+  | "gnucash_file_picker";
 
 export interface SetupCardProps {
   variant: SetupCardVariant;
@@ -17,6 +18,7 @@ const ICON: Record<SetupCardVariant, string> = {
   account_created: "🏦",
   opening_balance: "💰",
   envelope_created: "📋",
+  gnucash_file_picker: "📂",
 };
 
 export function SetupCard({ variant, title, detail }: SetupCardProps) {

@@ -424,6 +424,28 @@ describe("migration path", () => {
   });
 });
 
+describe("GnuCash migration branch — Task 15: intent detection", () => {
+  beforeEach(() => {
+    useOnboardingStore.getState().setPhase("path_select");
+  });
+
+  it("detects 'migrate from gnucash' intent and emits file-picker setup card", async () => {
+    const addSetupCard = vi.fn();
+    const handler = buildOnboardingHandler(makeDeps({ addSetupCard }));
+    await handler.handleInput("I'd like to migrate from GnuCash");
+    expect(addSetupCard).toHaveBeenCalledWith("gnucash_file_picker", expect.any(String), expect.any(String));
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_pick_file");
+  });
+
+  it("detects standalone 'gnucash' keyword and emits file-picker setup card", async () => {
+    const addSetupCard = vi.fn();
+    const handler = buildOnboardingHandler(makeDeps({ addSetupCard }));
+    await handler.handleInput("I use gnucash");
+    expect(addSetupCard).toHaveBeenCalledWith("gnucash_file_picker", expect.any(String), expect.any(String));
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_pick_file");
+  });
+});
+
 describe("sidebar invalidation", () => {
   it("calls invalidateSidebar after each DB write", async () => {
     const invalidateSidebar = vi.fn();
