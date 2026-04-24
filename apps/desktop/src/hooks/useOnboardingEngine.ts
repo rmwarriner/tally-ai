@@ -395,6 +395,13 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
         return;
 
       case "gnucash_import_mapping": {
+        const trimmed = text.trim().toLowerCase();
+        if (trimmed === "cancel") {
+          store.getState().setGnuCashPickedPath(null);
+          store.getState().setPhase("gnucash_import_pick_file");
+          deps.addSystemMessage("Cancelled. Pick a GnuCash file to try again.", "info");
+          return;
+        }
         const edit = parseMappingEdit(text);
         if (edit) {
           const updatedPlan = await deps.gnucashApplyMappingEdit(edit);
@@ -409,7 +416,23 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
       }
 
       case "gnucash_import_committing":
-      case "gnucash_import_reconciling":
+        return;
+
+      case "gnucash_import_reconciling": {
+        const text2 = text.trim().toLowerCase();
+        if (text2 === "continue" || text2 === "keep") {
+          await handleAcceptReconcile();
+        } else if (text2 === "rollback" || text2 === "roll back" || text2 === "cancel") {
+          await handleRollbackReconcile();
+        } else {
+          deps.addSystemMessage(
+            "Type 'continue' to keep the import, or 'rollback' to undo it.",
+            "info",
+          );
+        }
+        return;
+      }
+
       case "gnucash_import_done":
       case "checking":
       case "complete":
@@ -436,13 +459,30 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
 
   async function handleConfirmMapping(): Promise<void> {
     store.getState().setPhase("gnucash_import_committing");
-    const receipt = await deps.commitGnuCashImport();
+    let receipt;
+    try {
+      receipt = await deps.commitGnuCashImport();
+    } catch {
+      deps.addSystemMessage(
+        "I couldn't commit the import. Your data hasn't changed. You can try again, or type 'cancel' to pick a different file.",
+        "error",
+      );
+      store.getState().setPhase("gnucash_import_mapping");
+      return;
+    }
     store.getState().setGnuCashImportId(receipt.import_id);
     deps.addSystemMessage("Import committed. Checking balances against GnuCash…", "info");
     store.getState().setPhase("gnucash_import_reconciling");
     const pickedPath = store.getState().gnucashPickedPath ?? "";
-    const report = await deps.reconcileGnuCashImport(receipt.import_id, pickedPath);
-    deps.addGnuCashReconcileMessage(report);
+    try {
+      const report = await deps.reconcileGnuCashImport(receipt.import_id, pickedPath);
+      deps.addGnuCashReconcileMessage(report);
+    } catch {
+      deps.addSystemMessage(
+        "Import committed, but I couldn't check the balances against GnuCash. You can keep the import by typing 'continue', or type 'rollback' to undo it.",
+        "error",
+      );
+    }
   }
 
   async function handleAcceptReconcile(): Promise<void> {

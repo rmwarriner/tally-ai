@@ -694,6 +694,27 @@ describe("GnuCash reconcile phase", () => {
     return { deps, handler };
   }
 
+  // Helper: drives to mapping phase (before confirming) — equivalent to setUpToMappingConfirm
+  async function setupToMappingConfirm(overrides: Partial<OnboardingDeps> = {}) {
+    const deps = makeDeps(overrides);
+    const store = useOnboardingStore;
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    return { deps, store, handler };
+  }
+
+  // Helper: drives to reconciling phase — equivalent to setUpToReconcile
+  async function setupToReconcile(overrides: Partial<OnboardingDeps> = {}) {
+    const deps = makeDeps(overrides);
+    const store = useOnboardingStore;
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    await handler.handleConfirmMapping();
+    return { deps, store, handler };
+  }
+
   it("after commit, fetches balance report and renders reconcile artifact", async () => {
     const reconcile = vi.fn().mockResolvedValue(MOCK_RECONCILE_REPORT);
     const addReconcileMessage = vi.fn();
@@ -753,6 +774,53 @@ describe("GnuCash reconcile phase", () => {
       expect.stringContaining("rolled back"),
       "info",
     );
+  });
+
+  it("surfaces a recoverable error when commit fails and returns to mapping phase", async () => {
+    const { deps, store } = await setupToMappingConfirm();
+    deps.commitGnuCashImport = vi.fn().mockRejectedValue(new Error("db locked"));
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleConfirmMapping();
+    expect(store.getState().phase).toBe("gnucash_import_mapping");
+    expect(deps.addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("couldn't commit"),
+      "error",
+    );
+  });
+
+  it("surfaces a recoverable error when reconcile fails and keeps the commit", async () => {
+    const { deps, store } = await setupToMappingConfirm();
+    deps.reconcileGnuCashImport = vi.fn().mockRejectedValue(new Error("file gone"));
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleConfirmMapping();
+    expect(store.getState().phase).toBe("gnucash_import_reconciling");
+    expect(deps.addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("couldn't check the balances"),
+      "error",
+    );
+  });
+
+  it("'rollback' text in reconciling phase triggers rollback handler", async () => {
+    const { deps, store } = await setupToReconcile();
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("rollback");
+    expect(deps.rollbackGnuCashImport).toHaveBeenCalled();
+    expect(store.getState().phase).toBe("gnucash_import_pick_file");
+  });
+
+  it("'continue' text in reconciling phase triggers accept handler", async () => {
+    const { deps, store } = await setupToReconcile();
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("continue");
+    expect(store.getState().phase).toBe("gnucash_import_done");
+  });
+
+  it("'cancel' in mapping phase returns to file picker", async () => {
+    const { deps, store } = await setupToMappingConfirm();
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("cancel");
+    expect(store.getState().phase).toBe("gnucash_import_pick_file");
+    expect(store.getState().gnucashPickedPath).toBe(null);
   });
 });
 
