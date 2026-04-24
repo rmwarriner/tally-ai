@@ -393,4 +393,45 @@ mod tests {
         assert_eq!(p.transaction_count, 2);
         assert_eq!(p.account_count, 3);
     }
+
+    #[tokio::test]
+    async fn empty_sqlite_rejected_as_not_gnucash() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("empty.sqlite");
+        let url = format!("sqlite://{}?mode=rwc", path.display());
+        let opts = sqlx::sqlite::SqliteConnectOptions::from_str(&url).unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let err = read(&path).await.unwrap_err();
+        assert!(matches!(err, ImportError::NotAGnuCashBook));
+    }
+
+    #[tokio::test]
+    async fn missing_file_returns_file_unreadable() {
+        let err = read(std::path::Path::new("/nonexistent/path.gnucash")).await.unwrap_err();
+        assert!(matches!(err, ImportError::FileUnreadable(_)));
+    }
+
+    #[tokio::test]
+    async fn unbalanced_splits_rejected() {
+        let dir = tempdir().unwrap();
+        let mut spec = happy_spec();
+        spec.book_guid = "book_corrupt".into();
+        spec.transactions[0].splits[0].value_num += 1;
+        let path = build_fixture(dir.path(), &spec).await;
+
+        let err = read(&path).await.unwrap_err();
+        match err {
+            ImportError::UnbalancedTransaction { guid, sum_cents } => {
+                assert_eq!(guid, "tx_opening");
+                assert_eq!(sum_cents, 1);
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
 }
