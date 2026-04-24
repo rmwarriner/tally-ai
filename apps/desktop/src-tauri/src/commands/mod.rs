@@ -29,6 +29,7 @@ use crate::secrets::{
 pub struct AppState {
     pub pool: Mutex<Option<SqlitePool>>,
     pub household_id: Mutex<Option<String>>,
+    pub active_import: Mutex<Option<crate::core::import::gnucash::ImportPlan>>,
 }
 
 impl AppState {
@@ -36,6 +37,7 @@ impl AppState {
         Self {
             pool: Mutex::new(None),
             household_id: Mutex::new(None),
+            active_import: Mutex::new(None),
         }
     }
 }
@@ -667,4 +669,51 @@ pub async fn read_gnucash_file(
     crate::core::import::gnucash::reader::preview(Path::new(&args.path))
         .await
         .map_err(|e| e.to_string())
+}
+
+#[derive(Deserialize)]
+pub struct BuildImportPlanArgs {
+    pub path: String,
+}
+
+#[tauri::command]
+pub async fn gnucash_build_default_plan(
+    state: State<'_, AppState>,
+    args: BuildImportPlanArgs,
+) -> Result<crate::core::import::gnucash::ImportPlan, String> {
+    use crate::core::import::gnucash::{mapper, reader};
+    use std::path::Path;
+
+    let household_id = {
+        let g = state.household_id.lock().expect("household_id");
+        g.clone().ok_or_else(|| "No household configured".to_string())?
+    };
+    let book = reader::read(Path::new(&args.path))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let import_id = new_ulid();
+    let plan = mapper::build_default_plan(household_id, import_id, &book, new_ulid)
+        .map_err(|e| e.to_string())?;
+
+    *state.active_import.lock().expect("active_import") = Some(plan.clone());
+    Ok(plan)
+}
+
+#[derive(Deserialize)]
+pub struct ApplyMappingEditArgs {
+    pub edit: crate::core::import::gnucash::mapper::MappingEdit,
+}
+
+#[tauri::command]
+pub async fn gnucash_apply_mapping_edit(
+    state: State<'_, AppState>,
+    args: ApplyMappingEditArgs,
+) -> Result<crate::core::import::gnucash::ImportPlan, String> {
+    use crate::core::import::gnucash::mapper;
+
+    let mut guard = state.active_import.lock().expect("active_import");
+    let plan = guard.as_mut().ok_or_else(|| "No active import plan".to_string())?;
+    mapper::apply_mapping_edit(plan, &args.edit).map_err(|e| e.to_string())?;
+    Ok(plan.clone())
 }

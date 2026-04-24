@@ -35,6 +35,8 @@ pub fn run() {
             commands::get_current_envelope_periods,
             commands::get_pending_transactions,
             commands::read_gnucash_file,
+            commands::gnucash_build_default_plan,
+            commands::gnucash_apply_mapping_edit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
