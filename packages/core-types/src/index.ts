@@ -166,3 +166,57 @@ export interface AuditLog {
   user_id?: Ulid;
   created_at: UnixMs;
 }
+
+// ── GnuCash import types ──────────────────────────────────────────────────
+
+export interface GnuCashPreview {
+  book_guid: string;
+  account_count: number;
+  transaction_count: number;
+  non_usd_accounts: string[];
+}
+
+export type ImportAccountType = "asset" | "liability" | "income" | "expense" | "equity";
+export type NormalBalance = "debit" | "credit";
+export type JournalSide = "debit" | "credit";
+
+export interface AccountMapping {
+  gnc_guid: string;
+  gnc_full_name: string;
+  tally_account_id: string;
+  tally_name: string;
+  tally_parent_id: string | null;
+  tally_type: ImportAccountType;
+  tally_normal_balance: NormalBalance;
+}
+
+export interface PlannedLine {
+  tally_account_id: string;
+  amount_cents: number;
+  side: JournalSide;
+}
+
+export interface PlannedTransaction {
+  gnc_guid: string;
+  txn_date: number;
+  memo: string | null;
+  lines: PlannedLine[];
+}
+
+export interface ImportPlan {
+  household_id: string;
+  import_id: string;
+  account_mappings: AccountMapping[];
+  transactions: PlannedTransaction[];
+}
+
+export type MappingEdit =
+  | { kind: "change_type"; gnc_full_name: string; new_type: ImportAccountType; new_normal_balance: NormalBalance }
+  | { kind: "rename"; gnc_full_name: string; new_tally_name: string };
+
+export interface ImportReceipt {
+  import_id: string;
+  accounts_created: number;
+  transactions_committed: number;
+  transactions_skipped: number;
+}
