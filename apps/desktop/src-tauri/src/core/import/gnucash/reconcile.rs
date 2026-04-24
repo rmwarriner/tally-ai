@@ -134,6 +134,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reconcile_handles_duplicate_leaf_names() {
+        use super::super::committer::commit;
+        use super::super::mapper::build_default_plan;
+        use crate::db::{connection::create_encrypted_db, migrations::run_migrations};
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("tally.db");
+        let salt = [0u8; 16];
+        let pool = create_encrypted_db(&db_path, "pp", &salt).await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let hh_id = crate::id::new_ulid();
+        sqlx::query("INSERT INTO households (id, name, timezone, created_at) VALUES (?, 'H', 'America/Chicago', 0)")
+            .bind(&hh_id).execute(&pool).await.unwrap();
+
+        // Build a fixture with two "Savings" accounts under different parents.
+        let fixture_dir = tempdir().unwrap();
+        let mut spec = happy_spec();
+        spec.book_guid = "book_dup_leaf".into();
+        spec.accounts.push(super::super::test_fixtures::FixtureAccount {
+            guid: "acc_assets_parent".into(),
+            name: "Assets".into(),
+            account_type: "ASSET",
+            commodity_guid: "cmdty_usd".into(),
+            parent_guid: None,
+            placeholder: true,
+            hidden: false,
+        });
+        spec.accounts.push(super::super::test_fixtures::FixtureAccount {
+            guid: "acc_invest_parent".into(),
+            name: "Investments".into(),
+            account_type: "ASSET",
+            commodity_guid: "cmdty_usd".into(),
+            parent_guid: None,
+            placeholder: true,
+            hidden: false,
+        });
+        spec.accounts.push(super::super::test_fixtures::FixtureAccount {
+            guid: "acc_savings_a".into(),
+            name: "Savings".into(),
+            account_type: "BANK",
+            commodity_guid: "cmdty_usd".into(),
+            parent_guid: Some("acc_assets_parent".into()),
+            placeholder: false,
+            hidden: false,
+        });
+        spec.accounts.push(super::super::test_fixtures::FixtureAccount {
+            guid: "acc_savings_b".into(),
+            name: "Savings".into(),
+            account_type: "BANK",
+            commodity_guid: "cmdty_usd".into(),
+            parent_guid: Some("acc_invest_parent".into()),
+            placeholder: false,
+            hidden: false,
+        });
+        let fixture_path = build_fixture(fixture_dir.path(), &spec).await;
+        let book = read(&fixture_path).await.unwrap();
+        let plan = build_default_plan(hh_id.clone(), crate::id::new_ulid(), &book, crate::id::new_ulid).unwrap();
+        commit(&pool, &plan, 100).await.unwrap();
+
+        let report = reconcile(&pool, &plan, &book).await.unwrap();
+        // Both Savings rows must appear (by full_name) with matches=true.
+        let assets_savings = report.rows.iter().find(|r| r.account_name == "Assets:Savings")
+            .expect("Assets:Savings row present");
+        let invest_savings = report.rows.iter().find(|r| r.account_name == "Investments:Savings")
+            .expect("Investments:Savings row present");
+        assert!(assets_savings.matches);
+        assert!(invest_savings.matches);
+    }
+
+    #[tokio::test]
     async fn reconcile_flags_mismatch_after_manual_corruption() {
         use super::super::committer::commit;
         use super::super::mapper::build_default_plan;
