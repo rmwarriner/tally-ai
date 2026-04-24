@@ -173,4 +173,27 @@ mod tests {
         assert_eq!(second.transactions_committed, 0);
         assert_eq!(second.transactions_skipped, 2);
     }
+
+    #[tokio::test]
+    async fn commit_rolls_back_entirely_when_any_row_fails() {
+        let (_dir, pool, hh_id) = setup_db().await;
+        let fixture_dir = tempdir().unwrap();
+        let fixture_path = build_fixture(fixture_dir.path(), &happy_spec()).await;
+        let book = read(&fixture_path).await.unwrap();
+        let mut plan = build_default_plan(hh_id.clone(), crate::id::new_ulid(), &book, crate::id::new_ulid).unwrap();
+
+        // Corrupt the plan: second transaction's first line references a nonexistent account ID.
+        plan.transactions[1].lines[0].tally_account_id = "ULID_NONEXISTENT".into();
+
+        let err = commit(&pool, &plan, 100).await.unwrap_err();
+        assert!(matches!(err, ImportError::Database(_)));
+
+        let (acc_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM accounts WHERE household_id = ?")
+            .bind(&hh_id).fetch_one(&pool).await.unwrap();
+        assert_eq!(acc_count, 0, "accounts must be rolled back on failure");
+
+        let (txn_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transactions WHERE household_id = ?")
+            .bind(&hh_id).fetch_one(&pool).await.unwrap();
+        assert_eq!(txn_count, 0, "transactions must be rolled back on failure");
+    }
 }
