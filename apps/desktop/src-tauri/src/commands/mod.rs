@@ -651,3 +651,20 @@ pub async fn get_pending_transactions(
         .await
         .map_err(|e| e.to_string())
 }
+
+// ── GnuCash import commands ──────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ReadGnuCashArgs {
+    pub path: String,
+}
+
+#[tauri::command]
+pub async fn read_gnucash_file(
+    args: ReadGnuCashArgs,
+) -> Result<crate::core::import::gnucash::GnuCashPreview, String> {
+    use std::path::Path;
+    crate::core::import::gnucash::reader::preview(Path::new(&args.path))
+        .await
+        .map_err(|e| e.to_string())
+}
