@@ -124,6 +124,38 @@ pub fn apply_mapping_edit(plan: &mut ImportPlan, edit: &MappingEdit) -> Result<(
     Ok(())
 }
 
+/// Returns the list of Tally full-name paths (joined by ':') that are used
+/// by more than one account mapping. An empty result means the plan is
+/// safe to commit.
+pub fn find_duplicate_names(plan: &ImportPlan) -> Vec<String> {
+    let by_id: HashMap<&str, &AccountMapping> = plan
+        .account_mappings
+        .iter()
+        .map(|m| (m.tally_account_id.as_str(), m))
+        .collect();
+
+    fn full_path(m: &AccountMapping, by_id: &HashMap<&str, &AccountMapping>) -> String {
+        let mut parts = vec![m.tally_name.clone()];
+        let mut cur = m.tally_parent_id.clone();
+        while let Some(pid) = cur {
+            if let Some(p) = by_id.get(pid.as_str()) {
+                parts.push(p.tally_name.clone());
+                cur = p.tally_parent_id.clone();
+            } else {
+                break;
+            }
+        }
+        parts.reverse();
+        parts.join(":")
+    }
+
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    for m in &plan.account_mappings {
+        *counts.entry(full_path(m, &by_id)).or_insert(0) += 1;
+    }
+    counts.into_iter().filter(|(_, n)| *n > 1).map(|(p, _)| p).collect()
+}
+
 fn split_to_line(sp: &GncSplit, tally_account_id: String) -> PlannedLine {
     let (amount_cents, side) = if sp.amount_cents >= 0 {
         (sp.amount_cents, Side::Debit)
@@ -271,6 +303,31 @@ mod tests {
         ).unwrap();
         let m = plan.account_mappings.iter().find(|m| m.gnc_full_name == "Groceries").unwrap();
         assert_eq!(m.tally_name, "Food & Household");
+    }
+
+    #[tokio::test]
+    async fn duplicate_tally_names_detected() {
+        let dir = tempdir().unwrap();
+        let path = build_fixture(dir.path(), &happy_spec()).await;
+        let book = read(&path).await.unwrap();
+        let mut plan = build_default_plan("hh".into(), "imp".into(), &book, ulid_gen()).unwrap();
+
+        apply_mapping_edit(&mut plan, &MappingEdit::Rename {
+            gnc_full_name: "Groceries".into(),
+            new_tally_name: "Checking".into(),
+        }).unwrap();
+
+        let dups = find_duplicate_names(&plan);
+        assert!(dups.contains(&"Checking".to_string()));
+    }
+
+    #[tokio::test]
+    async fn no_duplicates_by_default() {
+        let dir = tempdir().unwrap();
+        let path = build_fixture(dir.path(), &happy_spec()).await;
+        let book = read(&path).await.unwrap();
+        let plan = build_default_plan("hh".into(), "imp".into(), &book, ulid_gen()).unwrap();
+        assert!(find_duplicate_names(&plan).is_empty());
     }
 
     #[tokio::test]
