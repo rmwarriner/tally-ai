@@ -87,6 +87,43 @@ where
     })
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MappingEdit {
+    ChangeType {
+        gnc_full_name: String,
+        new_type: AccountType,
+        new_normal_balance: NormalBalance,
+    },
+    Rename {
+        gnc_full_name: String,
+        new_tally_name: String,
+    },
+}
+
+pub fn apply_mapping_edit(plan: &mut ImportPlan, edit: &MappingEdit) -> Result<(), ImportError> {
+    let target = match edit {
+        MappingEdit::ChangeType { gnc_full_name, .. } => gnc_full_name,
+        MappingEdit::Rename { gnc_full_name, .. } => gnc_full_name,
+    };
+    let m = plan
+        .account_mappings
+        .iter_mut()
+        .find(|m| &m.gnc_full_name == target)
+        .ok_or_else(|| ImportError::DuplicateAccountName(format!("unknown account: {target}")))?;
+
+    match edit {
+        MappingEdit::ChangeType { new_type, new_normal_balance, .. } => {
+            m.tally_type = *new_type;
+            m.tally_normal_balance = *new_normal_balance;
+        }
+        MappingEdit::Rename { new_tally_name, .. } => {
+            m.tally_name = new_tally_name.clone();
+        }
+    }
+    Ok(())
+}
+
 fn split_to_line(sp: &GncSplit, tally_account_id: String) -> PlannedLine {
     let (amount_cents, side) = if sp.amount_cents >= 0 {
         (sp.amount_cents, Side::Debit)
@@ -189,6 +226,68 @@ mod tests {
         let food = plan.account_mappings.iter().find(|m| m.gnc_full_name == "Food").unwrap();
         let groc = plan.account_mappings.iter().find(|m| m.gnc_full_name == "Food:Groceries").unwrap();
         assert_eq!(groc.tally_parent_id, Some(food.tally_account_id.clone()));
+    }
+
+    #[tokio::test]
+    async fn apply_mapping_edit_changes_only_targeted_account() {
+        let dir = tempdir().unwrap();
+        let path = build_fixture(dir.path(), &happy_spec()).await;
+        let book = read(&path).await.unwrap();
+        let mut plan = build_default_plan("hh".into(), "imp".into(), &book, ulid_gen()).unwrap();
+
+        let original_count = plan.account_mappings.len();
+        let result = apply_mapping_edit(
+            &mut plan,
+            &MappingEdit::ChangeType {
+                gnc_full_name: "Groceries".into(),
+                new_type: AccountType::Liability,
+                new_normal_balance: NormalBalance::Credit,
+            },
+        );
+        assert!(result.is_ok());
+
+        let groc = plan.account_mappings.iter().find(|m| m.gnc_full_name == "Groceries").unwrap();
+        assert_eq!(groc.tally_type, AccountType::Liability);
+        assert_eq!(groc.tally_normal_balance, NormalBalance::Credit);
+
+        let chk = plan.account_mappings.iter().find(|m| m.gnc_full_name == "Checking").unwrap();
+        assert_eq!(chk.tally_type, AccountType::Asset);
+        assert_eq!(plan.account_mappings.len(), original_count);
+    }
+
+    #[tokio::test]
+    async fn apply_mapping_edit_rename() {
+        let dir = tempdir().unwrap();
+        let path = build_fixture(dir.path(), &happy_spec()).await;
+        let book = read(&path).await.unwrap();
+        let mut plan = build_default_plan("hh".into(), "imp".into(), &book, ulid_gen()).unwrap();
+
+        apply_mapping_edit(
+            &mut plan,
+            &MappingEdit::Rename {
+                gnc_full_name: "Groceries".into(),
+                new_tally_name: "Food & Household".into(),
+            },
+        ).unwrap();
+        let m = plan.account_mappings.iter().find(|m| m.gnc_full_name == "Groceries").unwrap();
+        assert_eq!(m.tally_name, "Food & Household");
+    }
+
+    #[tokio::test]
+    async fn apply_mapping_edit_unknown_account_errors() {
+        let dir = tempdir().unwrap();
+        let path = build_fixture(dir.path(), &happy_spec()).await;
+        let book = read(&path).await.unwrap();
+        let mut plan = build_default_plan("hh".into(), "imp".into(), &book, ulid_gen()).unwrap();
+        let err = apply_mapping_edit(
+            &mut plan,
+            &MappingEdit::ChangeType {
+                gnc_full_name: "Nonexistent".into(),
+                new_type: AccountType::Asset,
+                new_normal_balance: NormalBalance::Debit,
+            },
+        ).unwrap_err();
+        assert!(matches!(err, ImportError::DuplicateAccountName(ref s) if s.contains("Nonexistent")));
     }
 
     /// Deterministic pseudo-ULID for tests: atomic counter.
