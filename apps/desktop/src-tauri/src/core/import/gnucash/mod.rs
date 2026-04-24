@@ -179,6 +179,8 @@ pub enum ImportError {
     Database(#[from] sqlx::Error),
     #[error("Validation failure for transaction on {date}: {reason}")]
     InvalidTransaction { date: i64, reason: String },
+    #[error("Invalid split amount: num={num}, denom={denom}")]
+    InvalidSplitAmount { num: i64, denom: i64 },
 }
 
 #[cfg(test)]

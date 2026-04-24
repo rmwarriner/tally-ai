@@ -16,7 +16,7 @@ use std::str::FromStr;
 pub async fn read(path: &Path) -> Result<GnuCashBook, ImportError> {
     let pool = open_readonly(path).await?;
 
-    if !is_gnucash_book(&pool).await {
+    if !is_gnucash_book(&pool).await? {
         pool.close().await;
         return Err(ImportError::NotAGnuCashBook);
     }
@@ -46,7 +46,7 @@ pub async fn read(path: &Path) -> Result<GnuCashBook, ImportError> {
 /// whether to proceed before we build a full ImportPlan.
 pub async fn preview(path: &Path) -> Result<GnuCashPreview, ImportError> {
     let pool = open_readonly(path).await?;
-    if !is_gnucash_book(&pool).await {
+    if !is_gnucash_book(&pool).await? {
         pool.close().await;
         return Err(ImportError::NotAGnuCashBook);
     }
@@ -100,14 +100,13 @@ async fn open_readonly(path: &Path) -> Result<SqlitePool, ImportError> {
         .map_err(|e| ImportError::FileUnreadable(e.to_string()))
 }
 
-async fn is_gnucash_book(pool: &SqlitePool) -> bool {
-    sqlx::query_scalar::<_, i64>(
+async fn is_gnucash_book(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+    let n: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='books'",
     )
     .fetch_one(pool)
-    .await
-    .map(|n| n > 0)
-    .unwrap_or(false)
+    .await?;
+    Ok(n > 0)
 }
 
 async fn load_commodities(pool: &SqlitePool) -> Result<Vec<GncCommodity>, ImportError> {
@@ -146,9 +145,17 @@ async fn load_accounts(pool: &SqlitePool) -> Result<Vec<GncAccount>, ImportError
         rows.iter().map(|r| (r.guid.clone(), r)).collect();
 
     fn full_name(row: &Row, by_guid: &std::collections::HashMap<String, &Row>) -> String {
+        const MAX_DEPTH: usize = 64;
         let mut parts = vec![row.name.clone()];
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        visited.insert(row.guid.clone());
         let mut cur = row.parent_guid.clone();
+        let mut depth = 0;
         while let Some(pg) = cur {
+            if depth >= MAX_DEPTH || !visited.insert(pg.clone()) {
+                break; // cycle or pathologically deep — bail out gracefully
+            }
+            depth += 1;
             if let Some(parent) = by_guid.get(&pg) {
                 if parent.account_type == "ROOT" {
                     break;
@@ -234,7 +241,7 @@ async fn load_transactions(pool: &SqlitePool) -> Result<Vec<GncTransaction>, Imp
 
     let mut by_tx: std::collections::HashMap<String, Vec<GncSplit>> = std::collections::HashMap::new();
     for sp in sp_rows {
-        let cents = normalize_to_cents(sp.value_num, sp.value_denom);
+        let cents = normalize_to_cents(sp.value_num, sp.value_denom)?;
         let rec = sp.reconcile_state.chars().next().unwrap_or('n');
         by_tx.entry(sp.tx_guid).or_default().push(GncSplit {
             guid: sp.guid,
@@ -260,11 +267,19 @@ async fn load_transactions(pool: &SqlitePool) -> Result<Vec<GncTransaction>, Imp
     Ok(out)
 }
 
-fn normalize_to_cents(num: i64, denom: i64) -> i64 {
-    if denom == 100 || denom == 0 {
-        return num;
+fn normalize_to_cents(num: i64, denom: i64) -> Result<i64, ImportError> {
+    if denom == 0 {
+        return Err(ImportError::InvalidSplitAmount { num, denom });
     }
-    (num * 100) / denom
+    if denom == 100 {
+        return Ok(num);
+    }
+    let scaled = num
+        .checked_mul(100)
+        .ok_or(ImportError::InvalidSplitAmount { num, denom })?;
+    scaled
+        .checked_div(denom)
+        .ok_or(ImportError::InvalidSplitAmount { num, denom })
 }
 
 fn parse_gnc_date_to_utc_midnight_ms(s: &str) -> i64 {
@@ -415,6 +430,65 @@ mod tests {
     async fn missing_file_returns_file_unreadable() {
         let err = read(std::path::Path::new("/nonexistent/path.gnucash")).await.unwrap_err();
         assert!(matches!(err, ImportError::FileUnreadable(_)));
+    }
+
+    #[tokio::test]
+    async fn cyclic_parent_chain_does_not_hang() {
+        let dir = tempdir().unwrap();
+        let mut spec = happy_spec();
+        spec.book_guid = "book_cycle".into();
+        // Create two accounts whose parent_guid references each other
+        spec.accounts.push(super::super::test_fixtures::FixtureAccount {
+            guid: "acc_a".into(),
+            name: "A".into(),
+            account_type: "EXPENSE",
+            commodity_guid: "cmdty_usd".into(),
+            parent_guid: Some("acc_b".into()),
+            placeholder: false,
+            hidden: false,
+        });
+        spec.accounts.push(super::super::test_fixtures::FixtureAccount {
+            guid: "acc_b".into(),
+            name: "B".into(),
+            account_type: "EXPENSE",
+            commodity_guid: "cmdty_usd".into(),
+            parent_guid: Some("acc_a".into()),
+            placeholder: false,
+            hidden: false,
+        });
+        let path = build_fixture(dir.path(), &spec).await;
+
+        // If cycle protection fails this test will hang and get killed by the test runner.
+        let book = tokio::time::timeout(std::time::Duration::from_secs(5), read(&path))
+            .await
+            .expect("read must complete")
+            .expect("read must succeed");
+        let a = book.accounts.iter().find(|x| x.name == "A").expect("A present");
+        // full_name should be finite and end with "A"
+        assert!(a.full_name.ends_with(":A") || a.full_name == "A");
+    }
+
+    #[tokio::test]
+    async fn split_with_zero_denom_surfaces_error() {
+        // We bypass build_fixture (which uses denom=100) and insert a split with denom=0 directly.
+        let dir = tempdir().unwrap();
+        let path = build_fixture(dir.path(), &happy_spec()).await;
+        // Reopen rw and tweak one split
+        let url = format!("sqlite://{}?mode=rw", path.display());
+        let opts = sqlx::sqlite::SqliteConnectOptions::from_str(&url).unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE splits SET value_denom = 0 WHERE guid = 'sp_groc_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let err = read(&path).await.unwrap_err();
+        assert!(matches!(err, ImportError::InvalidSplitAmount { denom: 0, .. }));
     }
 
     #[tokio::test]
