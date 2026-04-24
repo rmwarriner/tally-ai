@@ -717,3 +717,40 @@ pub async fn gnucash_apply_mapping_edit(
     mapper::apply_mapping_edit(plan, &args.edit).map_err(|e| e.to_string())?;
     Ok(plan.clone())
 }
+
+#[tauri::command]
+pub async fn commit_gnucash_import(
+    state: State<'_, AppState>,
+) -> Result<crate::core::import::gnucash::ImportReceipt, String> {
+    let pool_opt = state.pool.lock().expect("pool").clone();
+    let pool = pool_opt.ok_or_else(|| "No database open".to_string())?;
+
+    let plan = {
+        let g = state.active_import.lock().expect("active_import");
+        g.clone().ok_or_else(|| "No active import plan".to_string())?
+    };
+
+    let receipt = crate::core::import::gnucash::committer::commit(&pool, &plan, now_ms())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    *state.active_import.lock().expect("active_import") = None;
+    Ok(receipt)
+}
+
+#[derive(Deserialize)]
+pub struct RollbackArgs {
+    pub import_id: String,
+}
+
+#[tauri::command]
+pub async fn rollback_gnucash_import(
+    state: State<'_, AppState>,
+    args: RollbackArgs,
+) -> Result<(), String> {
+    let pool_opt = state.pool.lock().expect("pool").clone();
+    let pool = pool_opt.ok_or_else(|| "No database open".to_string())?;
+    crate::core::import::gnucash::committer::rollback(&pool, &args.import_id)
+        .await
+        .map_err(|e| e.to_string())
+}
