@@ -68,4 +68,18 @@ export type ChatMessage =
       id: string;
       ts: number;
       plan: ImportPlan;
+    }
+  | {
+      kind: "gnucash_reconcile";
+      id: string;
+      ts: number;
+      report: {
+        rows: Array<{
+          account_name: string;
+          tally_cents: number;
+          gnucash_cents: number;
+          matches: boolean;
+        }>;
+        total_mismatches: number;
+      };
     };

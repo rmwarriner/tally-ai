@@ -4,6 +4,7 @@ import { useCommitProposal } from "../../hooks/useCommitProposal";
 import { useChatStore } from "../../stores/chatStore";
 import { ArtifactCard } from "../artifacts/ArtifactCard";
 import { GnuCashMappingCard } from "../artifacts/GnuCashMappingCard";
+import { GnuCashReconcileCard } from "../artifacts/GnuCashReconcileCard";
 import { HandoffMessage } from "../onboarding/HandoffMessage";
 import { SetupCard } from "../onboarding/SetupCard";
 import { AIMessage } from "./AIMessage";
@@ -20,6 +21,8 @@ interface MessageListProps {
   onPromptClick?: (prompt: string) => void;
   onSubmitGnuCashPath?: (path: string) => void;
   onConfirmMapping?: () => void;
+  onAcceptReconcile?: () => void;
+  onRollbackReconcile?: () => void;
 }
 
 interface TransactionMessageProps {
@@ -95,11 +98,13 @@ interface RenderOptions {
   onPromptClick?: (prompt: string) => void;
   onSubmitGnuCashPath?: (path: string) => void;
   onConfirmMapping?: () => void;
+  onAcceptReconcile?: () => void;
+  onRollbackReconcile?: () => void;
   addSystemMessage: (text: string, tone?: "info" | "error") => void;
 }
 
 function renderMessage(message: ChatMessage, opts: RenderOptions) {
-  const { onPromptClick, onSubmitGnuCashPath, onConfirmMapping, addSystemMessage } = opts;
+  const { onPromptClick, onSubmitGnuCashPath, onConfirmMapping, onAcceptReconcile, onRollbackReconcile, addSystemMessage } = opts;
   switch (message.kind) {
     case "user":
       return <UserMessage text={message.text} />;
@@ -162,12 +167,20 @@ function renderMessage(message: ChatMessage, opts: RenderOptions) {
           }}
         />
       );
+    case "gnucash_reconcile":
+      return (
+        <GnuCashReconcileCard
+          report={message.report}
+          onAccept={onAcceptReconcile ?? (() => undefined)}
+          onRollback={onRollbackReconcile ?? (() => undefined)}
+        />
+      );
     default:
       return null;
   }
 }
 
-export function MessageList({ messages, onPromptClick, onSubmitGnuCashPath, onConfirmMapping }: MessageListProps) {
+export function MessageList({ messages, onPromptClick, onSubmitGnuCashPath, onConfirmMapping, onAcceptReconcile, onRollbackReconcile }: MessageListProps) {
   const addSystemMessage = useChatStore((s) => s.addSystemMessage);
   const sorted = [...messages].sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id));
   const now = new Date();
@@ -176,6 +189,8 @@ export function MessageList({ messages, onPromptClick, onSubmitGnuCashPath, onCo
     onPromptClick,
     onSubmitGnuCashPath,
     onConfirmMapping,
+    onAcceptReconcile,
+    onRollbackReconcile,
     addSystemMessage,
   };
 
