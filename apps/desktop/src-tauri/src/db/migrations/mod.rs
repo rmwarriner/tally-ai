@@ -942,6 +942,22 @@ mod tests {
             names.contains(&"idx_transactions_source_ref_unique"),
             "missing idx_transactions_source_ref_unique"
         );
+
+        // Lock in the critical properties of the idempotency index
+        let unique_idx_sql: (String,) = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_transactions_source_ref_unique'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("unique index should exist");
+        assert!(
+            unique_idx_sql.0.contains("UNIQUE"),
+            "idempotency index must be UNIQUE"
+        );
+        assert!(
+            unique_idx_sql.0.contains("source_ref IS NOT NULL"),
+            "index must be partial (WHERE source_ref IS NOT NULL) to allow multiple NULL source_refs per household"
+        );
     }
 
     #[tokio::test]
