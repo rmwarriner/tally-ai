@@ -110,7 +110,7 @@ pub fn apply_mapping_edit(plan: &mut ImportPlan, edit: &MappingEdit) -> Result<(
         .account_mappings
         .iter_mut()
         .find(|m| &m.gnc_full_name == target)
-        .ok_or_else(|| ImportError::DuplicateAccountName(format!("unknown account: {target}")))?;
+        .ok_or_else(|| ImportError::UnknownAccount(target.clone()))?;
 
     match edit {
         MappingEdit::ChangeType { new_type, new_normal_balance, .. } => {
@@ -135,9 +135,17 @@ pub fn find_duplicate_names(plan: &ImportPlan) -> Vec<String> {
         .collect();
 
     fn full_path(m: &AccountMapping, by_id: &HashMap<&str, &AccountMapping>) -> String {
+        const MAX_DEPTH: usize = 64;
         let mut parts = vec![m.tally_name.clone()];
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        visited.insert(m.tally_account_id.clone());
         let mut cur = m.tally_parent_id.clone();
+        let mut depth = 0;
         while let Some(pid) = cur {
+            if depth >= MAX_DEPTH || !visited.insert(pid.clone()) {
+                break;
+            }
+            depth += 1;
             if let Some(p) = by_id.get(pid.as_str()) {
                 parts.push(p.tally_name.clone());
                 cur = p.tally_parent_id.clone();
@@ -153,7 +161,9 @@ pub fn find_duplicate_names(plan: &ImportPlan) -> Vec<String> {
     for m in &plan.account_mappings {
         *counts.entry(full_path(m, &by_id)).or_insert(0) += 1;
     }
-    counts.into_iter().filter(|(_, n)| *n > 1).map(|(p, _)| p).collect()
+    let mut dups: Vec<String> = counts.into_iter().filter(|(_, n)| *n > 1).map(|(p, _)| p).collect();
+    dups.sort();
+    dups
 }
 
 fn split_to_line(sp: &GncSplit, tally_account_id: String) -> PlannedLine {
@@ -303,6 +313,7 @@ mod tests {
         ).unwrap();
         let m = plan.account_mappings.iter().find(|m| m.gnc_full_name == "Groceries").unwrap();
         assert_eq!(m.tally_name, "Food & Household");
+        assert_eq!(m.gnc_full_name, "Groceries");
     }
 
     #[tokio::test]
@@ -344,7 +355,7 @@ mod tests {
                 new_normal_balance: NormalBalance::Debit,
             },
         ).unwrap_err();
-        assert!(matches!(err, ImportError::DuplicateAccountName(ref s) if s.contains("Nonexistent")));
+        assert!(matches!(err, ImportError::UnknownAccount(ref s) if s == "Nonexistent"));
     }
 
     /// Deterministic pseudo-ULID for tests: atomic counter.

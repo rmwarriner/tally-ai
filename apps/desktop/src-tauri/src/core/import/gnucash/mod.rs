@@ -173,6 +173,8 @@ pub enum ImportError {
     UnbalancedTransaction { guid: String, sum_cents: i64 },
     #[error("Duplicate Tally account name after mapping: {0}")]
     DuplicateAccountName(String),
+    #[error("Unknown GnuCash account: {0}")]
+    UnknownAccount(String),
     #[error("Import with id {0} already exists")]
     ImportAlreadyRan(String),
     #[error("Database error: {0}")]
