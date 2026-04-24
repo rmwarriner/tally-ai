@@ -148,6 +148,21 @@ Each decision follows this format:
 
 ---
 
+### 2026-04-24 — GnuCash Mapping Card as Top-Level Message Kind
+
+**Decision**: The GnuCash CoA mapping preview is rendered as a new top-level chat message `kind: "gnucash_mapping"` dispatched from `MessageList.tsx`, not as an `artifact` variant via `ArtifactCard.tsx`.
+
+**Rationale**: The existing `artifact` message kind's payload is `{ artifact_id, title, content?: string }` with `content` as plain text — it's not a discriminated-union-with-typed-payloads dispatcher. Existing rich renderers (`LedgerTable`, `BalanceReport`) sit outside that path unwired. Converting the `artifact` kind into a typed-payload union and retro-fitting the existing renderers was out of scope for T-072; the one-component-per-rich-kind pattern (already used by `TransactionCard`, `HandoffMessage`, `SetupCard`) is the more honest fit.
+
+**Status**: Accepted
+
+**Consequences**:
+- Each rich chat artifact currently lives under its own message kind — `gnucash_mapping` joins `transaction_card`, `handoff`, `setup_card`.
+- If a future ticket consolidates rich artifact rendering under a typed-payload `artifact` dispatcher, `GnuCashMappingCard`, `GnuCashReconcileCard` (T-074), `LedgerTable`, and `BalanceReport` would migrate together — a deliberate refactor, not an incremental change.
+- The plan's sketched `reply.messages.some(m => m.kind === "artifact" && m.artifact === "gnucash_mapping")` test pattern was replaced with `addGnuCashMappingMessage` store-action assertions, consistent with how other onboarding-side-effect handlers are tested.
+
+---
+
 ## Superseded Decisions
 
 (None yet — first major decisions just made.)
