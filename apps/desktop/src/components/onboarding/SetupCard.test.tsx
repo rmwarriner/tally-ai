@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { SetupCard, type SetupCardProps } from "./SetupCard";
 
 describe("SetupCard — account_created variant", () => {
@@ -68,5 +68,61 @@ describe("SetupCard — household_created variant", () => {
       />,
     );
     expect(screen.getByText("Smith Family household created")).toBeInTheDocument();
+  });
+});
+
+describe("SetupCard — gnucash_file_picker variant", () => {
+  it("renders a path input and submit button", () => {
+    render(
+      <SetupCard
+        variant="gnucash_file_picker"
+        title="Import from GnuCash"
+        detail=""
+      />,
+    );
+    expect(screen.getByLabelText(/path to your gnucash file/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /use this file/i })).toBeInTheDocument();
+  });
+
+  it("submit button is disabled when input is empty", () => {
+    render(
+      <SetupCard
+        variant="gnucash_file_picker"
+        title="Import from GnuCash"
+        detail=""
+      />,
+    );
+    expect(screen.getByRole("button", { name: /use this file/i })).toBeDisabled();
+  });
+
+  it("calls onSubmitGnuCashPath with the trimmed path on submit", () => {
+    const onSubmit = vi.fn();
+    render(
+      <SetupCard
+        variant="gnucash_file_picker"
+        title="Import from GnuCash"
+        detail=""
+        onSubmitGnuCashPath={onSubmit}
+      />,
+    );
+    const input = screen.getByLabelText(/path to your gnucash file/i);
+    fireEvent.change(input, { target: { value: "/Users/me/book.gnucash" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(onSubmit).toHaveBeenCalledWith("/Users/me/book.gnucash");
+  });
+
+  it("does not call onSubmitGnuCashPath when path is whitespace only", () => {
+    const onSubmit = vi.fn();
+    render(
+      <SetupCard
+        variant="gnucash_file_picker"
+        title="Import from GnuCash"
+        detail=""
+        onSubmitGnuCashPath={onSubmit}
+      />,
+    );
+    // Button stays disabled for empty input
+    expect(screen.getByRole("button", { name: /use this file/i })).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

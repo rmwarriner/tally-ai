@@ -12,16 +12,61 @@ import {
   buildOnboardingHandler,
   type OnboardingDeps,
 } from "./useOnboardingEngine";
+import type { GnuCashPreview, ImportPlan } from "@tally/core-types";
 
 const mockInvoke = vi.mocked(invoke);
+
+const MOCK_PREVIEW: GnuCashPreview = {
+  book_guid: "b1",
+  account_count: 3,
+  transaction_count: 2,
+  non_usd_accounts: [],
+};
+
+const MOCK_PLAN: ImportPlan = {
+  household_id: "hh",
+  import_id: "imp",
+  account_mappings: [
+    {
+      gnc_guid: "a",
+      gnc_full_name: "Checking",
+      tally_account_id: "u1",
+      tally_name: "Checking",
+      tally_parent_id: null,
+      tally_type: "asset",
+      tally_normal_balance: "debit",
+    },
+  ],
+  transactions: [],
+};
+
+const MOCK_RECONCILE_REPORT = {
+  total_mismatches: 0,
+  rows: [
+    { account_name: "Checking", tally_cents: 95000, gnucash_cents: 95000, matches: true },
+  ],
+};
 
 function makeDeps(overrides: Partial<OnboardingDeps> = {}): OnboardingDeps {
   return {
     addSystemMessage: vi.fn(),
     addSetupCard: vi.fn(),
     addHandoffMessage: vi.fn(),
+    addGnuCashMappingMessage: vi.fn(),
+    addGnuCashReconcileMessage: vi.fn(),
     invoke: mockInvoke,
     invalidateSidebar: vi.fn(),
+    readGnuCashFile: vi.fn().mockResolvedValue(MOCK_PREVIEW),
+    gnucashBuildDefaultPlan: vi.fn().mockResolvedValue(MOCK_PLAN),
+    gnucashApplyMappingEdit: vi.fn().mockResolvedValue(MOCK_PLAN),
+    commitGnuCashImport: vi.fn().mockResolvedValue({
+      import_id: "imp",
+      accounts_created: 3,
+      transactions_committed: 2,
+      transactions_skipped: 0,
+    }),
+    reconcileGnuCashImport: vi.fn().mockResolvedValue(MOCK_RECONCILE_REPORT),
+    rollbackGnuCashImport: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -424,6 +469,361 @@ describe("migration path", () => {
   });
 });
 
+describe("GnuCash migration branch — Task 15: intent detection", () => {
+  beforeEach(() => {
+    useOnboardingStore.getState().setPhase("path_select");
+  });
+
+  it("detects 'migrate from gnucash' intent and emits file-picker setup card", async () => {
+    const addSetupCard = vi.fn();
+    const handler = buildOnboardingHandler(makeDeps({ addSetupCard }));
+    await handler.handleInput("I'd like to migrate from GnuCash");
+    expect(addSetupCard).toHaveBeenCalledWith("gnucash_file_picker", expect.any(String), expect.any(String));
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_pick_file");
+  });
+
+  it("detects standalone 'gnucash' keyword and emits file-picker setup card", async () => {
+    const addSetupCard = vi.fn();
+    const handler = buildOnboardingHandler(makeDeps({ addSetupCard }));
+    await handler.handleInput("I use gnucash");
+    expect(addSetupCard).toHaveBeenCalledWith("gnucash_file_picker", expect.any(String), expect.any(String));
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_pick_file");
+  });
+});
+
+describe("GnuCash import store state persistence", () => {
+  beforeEach(() => {
+    useOnboardingStore.getState().setPhase("path_select");
+  });
+
+  it("gnucashPickedPath is set in store after handleFilePicked", async () => {
+    const deps = makeDeps();
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    expect(useOnboardingStore.getState().gnucashPickedPath).toBe("/tmp/book.gnucash");
+  });
+
+  it("state persists across a simulated re-render (two handlers from same store)", async () => {
+    const deps = makeDeps();
+    // First handler picks the file
+    const handler1 = buildOnboardingHandler(deps);
+    await handler1.handleInput("migrate from GnuCash");
+    await handler1.handleFilePicked("/tmp/book.gnucash");
+    expect(useOnboardingStore.getState().gnucashPickedPath).toBe("/tmp/book.gnucash");
+    // Simulate re-render: construct a fresh handler from the same store
+    const handler2 = buildOnboardingHandler(deps);
+    // The path should still be in the store
+    expect(useOnboardingStore.getState().gnucashPickedPath).toBe("/tmp/book.gnucash");
+    // And the second handler can confirm the mapping (store phase is gnucash_import_mapping)
+    await handler2.handleConfirmMapping();
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_reconciling");
+  });
+});
+
+describe("GnuCash migration branch — Task 16: file picker flow", () => {
+  beforeEach(() => {
+    useOnboardingStore.getState().setPhase("path_select");
+  });
+
+  it("after picking a valid USD book, transitions to mapping phase with default plan", async () => {
+    const addGnuCashMappingMessage = vi.fn();
+    const deps = makeDeps({ addGnuCashMappingMessage });
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    expect(deps.readGnuCashFile).toHaveBeenCalledWith("/tmp/book.gnucash");
+    expect(deps.gnucashBuildDefaultPlan).toHaveBeenCalledWith("/tmp/book.gnucash");
+    expect(addGnuCashMappingMessage).toHaveBeenCalledWith(MOCK_PLAN);
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_mapping");
+  });
+
+  it("rejects non-USD books with a hard-error system message and stays at pick_file phase", async () => {
+    const addSystemMessage = vi.fn();
+    const deps = makeDeps({
+      addSystemMessage,
+      readGnuCashFile: vi.fn().mockResolvedValue({
+        book_guid: "b1",
+        account_count: 2,
+        transaction_count: 0,
+        non_usd_accounts: ["Euro Savings"],
+      }),
+    });
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Euro Savings"),
+      "error",
+    );
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_pick_file");
+  });
+
+  it("phase() accessor returns current store phase", async () => {
+    const deps = makeDeps();
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    expect(handler.phase()).toBe("gnucash_import_mapping");
+  });
+});
+
+describe("GnuCash migration branch — Task 18: mapping-edit loop", () => {
+  async function setupMappingPhase(overrides: Partial<OnboardingDeps> = {}) {
+    const deps = makeDeps(overrides);
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    return { deps, handler };
+  }
+
+  it("applies a change_type edit when user asks 'make X a liability'", async () => {
+    const updatedPlan: ImportPlan = {
+      household_id: "hh",
+      import_id: "imp",
+      account_mappings: [
+        {
+          gnc_guid: "a",
+          gnc_full_name: "Groceries",
+          tally_account_id: "u1",
+          tally_name: "Groceries",
+          tally_parent_id: null,
+          tally_type: "liability",
+          tally_normal_balance: "credit",
+        },
+      ],
+      transactions: [],
+    };
+    const applyEdit = vi.fn().mockResolvedValue(updatedPlan);
+    const addGnuCashMappingMessage = vi.fn();
+    const { handler } = await setupMappingPhase({
+      gnucashApplyMappingEdit: applyEdit,
+      addGnuCashMappingMessage,
+    });
+
+    await handler.handleInput("make Groceries a liability");
+    expect(applyEdit).toHaveBeenCalledWith({
+      kind: "change_type",
+      gnc_full_name: "Groceries",
+      new_type: "liability",
+      new_normal_balance: "credit",
+    });
+    expect(addGnuCashMappingMessage).toHaveBeenCalledTimes(2); // once on pick, once after edit
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_mapping");
+  });
+
+  it("applies a rename edit when user asks 'rename X to Y'", async () => {
+    const applyEdit = vi.fn().mockResolvedValue(MOCK_PLAN);
+    const { handler } = await setupMappingPhase({ gnucashApplyMappingEdit: applyEdit });
+    await handler.handleInput("rename Groceries to Food");
+    expect(applyEdit).toHaveBeenCalledWith({
+      kind: "rename",
+      gnc_full_name: "Groceries",
+      new_tally_name: "Food",
+    });
+  });
+
+  it("emits info message when mapping edit text is not parseable", async () => {
+    const addSystemMessage = vi.fn();
+    const { handler } = await setupMappingPhase({ addSystemMessage });
+    await handler.handleInput("I want to change something but not sure how");
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("make"),
+      "info",
+    );
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_mapping");
+  });
+
+  it("confirms the plan and transitions to reconciling phase", async () => {
+    const commit = vi.fn().mockResolvedValue({
+      import_id: "imp",
+      accounts_created: 3,
+      transactions_committed: 2,
+      transactions_skipped: 0,
+    });
+    const { handler } = await setupMappingPhase({ commitGnuCashImport: commit });
+    await handler.handleConfirmMapping();
+    expect(commit).toHaveBeenCalled();
+    expect(handler.phase()).toBe("gnucash_import_reconciling");
+  });
+
+  it("emits a system message after successful commit", async () => {
+    const addSystemMessage = vi.fn();
+    const { handler } = await setupMappingPhase({ addSystemMessage });
+    await handler.handleConfirmMapping();
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Import committed"),
+      "info",
+    );
+  });
+
+  it("stores the import_id in the onboarding store after commit", async () => {
+    const commit = vi.fn().mockResolvedValue({
+      import_id: "imp-42",
+      accounts_created: 1,
+      transactions_committed: 5,
+      transactions_skipped: 0,
+    });
+    const { handler } = await setupMappingPhase({ commitGnuCashImport: commit });
+    await handler.handleConfirmMapping();
+    expect(useOnboardingStore.getState().gnucashImportId).toBe("imp-42");
+  });
+
+  it("rejects article-only names like 'make an asset'", async () => {
+    const applyEdit = vi.fn().mockResolvedValue(MOCK_PLAN);
+    const addSystemMessage = vi.fn();
+    const { handler } = await setupMappingPhase({
+      gnucashApplyMappingEdit: applyEdit,
+      addSystemMessage,
+    });
+    await handler.handleInput("make an asset");
+    expect(applyEdit).not.toHaveBeenCalled();
+    expect(addSystemMessage).toHaveBeenCalledWith(expect.stringContaining("make"), "info");
+    await handler.handleInput("make a liability");
+    expect(applyEdit).not.toHaveBeenCalled();
+  });
+});
+
+describe("GnuCash reconcile phase", () => {
+  async function setupThroughCommit(overrides: Partial<OnboardingDeps> = {}) {
+    const deps = makeDeps(overrides);
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    await handler.handleConfirmMapping();
+    return { deps, handler };
+  }
+
+  // Helper: drives to mapping phase (before confirming) — equivalent to setUpToMappingConfirm
+  async function setupToMappingConfirm(overrides: Partial<OnboardingDeps> = {}) {
+    const deps = makeDeps(overrides);
+    const store = useOnboardingStore;
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    return { deps, store, handler };
+  }
+
+  // Helper: drives to reconciling phase — equivalent to setUpToReconcile
+  async function setupToReconcile(overrides: Partial<OnboardingDeps> = {}) {
+    const deps = makeDeps(overrides);
+    const store = useOnboardingStore;
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("migrate from GnuCash");
+    await handler.handleFilePicked("/tmp/book.gnucash");
+    await handler.handleConfirmMapping();
+    return { deps, store, handler };
+  }
+
+  it("after commit, fetches balance report and renders reconcile artifact", async () => {
+    const reconcile = vi.fn().mockResolvedValue(MOCK_RECONCILE_REPORT);
+    const addReconcileMessage = vi.fn();
+    const { handler } = await setupThroughCommit({
+      reconcileGnuCashImport: reconcile,
+      addGnuCashReconcileMessage: addReconcileMessage,
+    });
+    expect(reconcile).toHaveBeenCalledWith(expect.any(String), expect.any(String));
+    expect(addReconcileMessage).toHaveBeenCalledWith(MOCK_RECONCILE_REPORT);
+    expect(handler.phase()).toBe("gnucash_import_reconciling");
+  });
+
+  it("reconcileGnuCashImport is called with correct importId and path", async () => {
+    const reconcile = vi.fn().mockResolvedValue(MOCK_RECONCILE_REPORT);
+    const commit = vi.fn().mockResolvedValue({
+      import_id: "imp-reconcile-test",
+      accounts_created: 1,
+      transactions_committed: 1,
+      transactions_skipped: 0,
+    });
+    await setupThroughCommit({ commitGnuCashImport: commit, reconcileGnuCashImport: reconcile });
+    expect(reconcile).toHaveBeenCalledWith("imp-reconcile-test", "/tmp/book.gnucash");
+  });
+
+  it("accepting the report transitions to gnucash_import_done and emits handoff", async () => {
+    const addHandoffMessage = vi.fn();
+    const { handler } = await setupThroughCommit({ addHandoffMessage });
+    await handler.handleAcceptReconcile();
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_done");
+    expect(addHandoffMessage).toHaveBeenCalled();
+  });
+
+  it("rejecting rolls back and returns to file picker", async () => {
+    const rollback = vi.fn().mockResolvedValue(undefined);
+    const commit = vi.fn().mockResolvedValue({
+      import_id: "imp_1",
+      accounts_created: 1,
+      transactions_committed: 1,
+      transactions_skipped: 0,
+    });
+    const { handler } = await setupThroughCommit({
+      commitGnuCashImport: commit,
+      rollbackGnuCashImport: rollback,
+    });
+    await handler.handleRollbackReconcile();
+    expect(rollback).toHaveBeenCalledWith("imp_1");
+    expect(useOnboardingStore.getState().phase).toBe("gnucash_import_pick_file");
+    expect(useOnboardingStore.getState().gnucashImportId).toBe(null);
+    expect(useOnboardingStore.getState().gnucashPickedPath).toBe(null);
+  });
+
+  it("rollback emits a system message guiding the user to retry", async () => {
+    const addSystemMessage = vi.fn();
+    const { handler } = await setupThroughCommit({ addSystemMessage });
+    await handler.handleRollbackReconcile();
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("rolled back"),
+      "info",
+    );
+  });
+
+  it("surfaces a recoverable error when commit fails and returns to mapping phase", async () => {
+    const { deps, store } = await setupToMappingConfirm();
+    deps.commitGnuCashImport = vi.fn().mockRejectedValue(new Error("db locked"));
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleConfirmMapping();
+    expect(store.getState().phase).toBe("gnucash_import_mapping");
+    expect(deps.addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("couldn't commit"),
+      "error",
+    );
+  });
+
+  it("surfaces a recoverable error when reconcile fails and keeps the commit", async () => {
+    const { deps, store } = await setupToMappingConfirm();
+    deps.reconcileGnuCashImport = vi.fn().mockRejectedValue(new Error("file gone"));
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleConfirmMapping();
+    expect(store.getState().phase).toBe("gnucash_import_reconciling");
+    expect(deps.addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("couldn't check the balances"),
+      "error",
+    );
+  });
+
+  it("'rollback' text in reconciling phase triggers rollback handler", async () => {
+    const { deps, store } = await setupToReconcile();
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("rollback");
+    expect(deps.rollbackGnuCashImport).toHaveBeenCalled();
+    expect(store.getState().phase).toBe("gnucash_import_pick_file");
+  });
+
+  it("'continue' text in reconciling phase triggers accept handler", async () => {
+    const { deps, store } = await setupToReconcile();
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("continue");
+    expect(store.getState().phase).toBe("gnucash_import_done");
+  });
+
+  it("'cancel' in mapping phase returns to file picker", async () => {
+    const { deps, store } = await setupToMappingConfirm();
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("cancel");
+    expect(store.getState().phase).toBe("gnucash_import_pick_file");
+    expect(store.getState().gnucashPickedPath).toBe(null);
+  });
+});
+
 describe("sidebar invalidation", () => {
   it("calls invalidateSidebar after each DB write", async () => {
     const invalidateSidebar = vi.fn();
@@ -434,13 +834,10 @@ describe("sidebar invalidation", () => {
       .mockResolvedValueOnce(undefined)   // set_opening_balance (write, invalidate)
       .mockResolvedValueOnce("en_01");    // create_envelope (write, invalidate)
 
-    const handler = buildOnboardingHandler({
-      addSystemMessage: vi.fn(),
-      addSetupCard: vi.fn(),
-      addHandoffMessage: vi.fn(),
+    const handler = buildOnboardingHandler(makeDeps({
       invoke: mockInvokeLocal as never,
       invalidateSidebar,
-    });
+    }));
 
     await handler.checkAndStart();
     await handler.handleInput("fresh");

@@ -1,7 +1,9 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
+import type { GnuCashPreview, ImportPlan, ImportReceipt, MappingEdit, ImportAccountType, NormalBalance } from "@tally/core-types";
 import type { SetupCardVariant } from "../components/onboarding/SetupCard";
+import type { GnuCashReconcileReport } from "../components/artifacts/GnuCashReconcileCard";
 import { useChatStore } from "../stores/chatStore";
 import { useOnboardingStore } from "../stores/onboardingStore";
 import type { FreshStep, MigrationStep } from "../stores/onboardingStore";
@@ -16,8 +18,16 @@ export interface OnboardingDeps {
     envelopeCount: number,
     starterPrompts: string[],
   ) => void;
+  addGnuCashMappingMessage: (plan: ImportPlan) => void;
+  addGnuCashReconcileMessage: (report: GnuCashReconcileReport) => void;
   invoke: typeof tauriInvoke;
   invalidateSidebar: () => void | Promise<void>;
+  readGnuCashFile: (path: string) => Promise<GnuCashPreview>;
+  gnucashBuildDefaultPlan: (path: string) => Promise<ImportPlan>;
+  gnucashApplyMappingEdit: (edit: MappingEdit) => Promise<ImportPlan>;
+  commitGnuCashImport: () => Promise<ImportReceipt>;
+  reconcileGnuCashImport: (importId: string, path: string) => Promise<GnuCashReconcileReport>;
+  rollbackGnuCashImport: (importId: string) => Promise<void>;
 }
 
 const STARTER_PROMPTS = [
@@ -44,6 +54,30 @@ function isAffirmative(text: string): boolean {
 
 function isNegative(text: string): boolean {
   return /^(no|nope|done|none|that'?s? (all|it)|finished|stop|n)$/i.test(text.trim());
+}
+
+function isValidAccountName(name: string): boolean {
+  const trimmed = name.trim();
+  return trimmed.length > 2 && !/^(a|an|the)$/i.test(trimmed);
+}
+
+function parseMappingEdit(text: string): MappingEdit | null {
+  const changeType = text.match(/make\s+(\S+(?:\s+\S+)*?)\s+(?:an?\s+)?(asset|liability|income|expense|equity)\b/i);
+  if (changeType) {
+    const [, name, type] = changeType;
+    if (!isValidAccountName(name)) return null;
+    const new_type = type.toLowerCase() as ImportAccountType;
+    const new_normal_balance: NormalBalance =
+      new_type === "asset" || new_type === "expense" ? "debit" : "credit";
+    return { kind: "change_type", gnc_full_name: name.trim(), new_type, new_normal_balance };
+  }
+  const rename = text.match(/rename\s+(\S+(?:\s+\S+)*?)\s+to\s+(.+)/i);
+  if (rename) {
+    const [, name, newName] = rename;
+    if (!isValidAccountName(name)) return null;
+    return { kind: "rename", gnc_full_name: name.trim(), new_tally_name: newName.trim() };
+  }
+  return null;
 }
 
 export function buildOnboardingHandler(deps: OnboardingDeps) {
@@ -315,6 +349,19 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
     switch (phase) {
       case "path_select": {
         const lower = text.toLowerCase();
+        if (/migrate.*gnucash|gnucash.*migrat|gnucash/i.test(text)) {
+          store.getState().setPhase("gnucash_import_pick_file");
+          deps.addSetupCard(
+            "gnucash_file_picker",
+            "Import from GnuCash",
+            "Select your GnuCash file to get started",
+          );
+          deps.addSystemMessage(
+            "Great! Please select your GnuCash file using the file picker above.",
+            "info",
+          );
+          return;
+        }
         if (lower.includes("fresh") || lower.includes("start")) {
           store.getState().setPhase("fresh_start");
           deps.addSystemMessage(
@@ -342,45 +389,215 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
         await handleMigrationStep(migrationStep, text);
         return;
 
+      case "gnucash_import_pick_file":
+        // In this phase, users interact via the file picker component (handleFilePicked).
+        // Text messages are ignored here.
+        return;
+
+      case "gnucash_import_mapping": {
+        const trimmed = text.trim().toLowerCase();
+        if (trimmed === "cancel") {
+          store.getState().setGnuCashPickedPath(null);
+          store.getState().setPhase("gnucash_import_pick_file");
+          deps.addSystemMessage("Cancelled. Pick a GnuCash file to try again.", "info");
+          return;
+        }
+        const edit = parseMappingEdit(text);
+        if (edit) {
+          const updatedPlan = await deps.gnucashApplyMappingEdit(edit);
+          deps.addGnuCashMappingMessage(updatedPlan);
+        } else {
+          deps.addSystemMessage(
+            "Try: 'make Groceries a liability' or 'rename Groceries to Food'",
+            "info",
+          );
+        }
+        return;
+      }
+
+      case "gnucash_import_committing":
+        return;
+
+      case "gnucash_import_reconciling": {
+        const text2 = text.trim().toLowerCase();
+        if (text2 === "continue" || text2 === "keep") {
+          await handleAcceptReconcile();
+        } else if (text2 === "rollback" || text2 === "roll back" || text2 === "cancel") {
+          await handleRollbackReconcile();
+        } else {
+          deps.addSystemMessage(
+            "Type 'continue' to keep the import, or 'rollback' to undo it.",
+            "info",
+          );
+        }
+        return;
+      }
+
+      case "gnucash_import_done":
       case "checking":
       case "complete":
         return;
     }
   }
 
-  return { checkAndStart, handleInput };
+  async function handleFilePicked(path: string): Promise<void> {
+    const preview = await deps.readGnuCashFile(path);
+    if (preview.non_usd_accounts.length > 0) {
+      const accountList = preview.non_usd_accounts.join(", ");
+      deps.addSystemMessage(
+        `Your book contains non-USD accounts (${accountList}). Only USD books are supported. Please export a USD-only book and try again.`,
+        "error",
+      );
+      // Stay at gnucash_import_pick_file
+      return;
+    }
+    store.getState().setGnuCashPickedPath(path);
+    const plan = await deps.gnucashBuildDefaultPlan(path);
+    deps.addGnuCashMappingMessage(plan);
+    store.getState().setPhase("gnucash_import_mapping");
+  }
+
+  async function handleConfirmMapping(): Promise<void> {
+    store.getState().setPhase("gnucash_import_committing");
+    let receipt;
+    try {
+      receipt = await deps.commitGnuCashImport();
+    } catch {
+      deps.addSystemMessage(
+        "I couldn't commit the import. Your data hasn't changed. You can try again, or type 'cancel' to pick a different file.",
+        "error",
+      );
+      store.getState().setPhase("gnucash_import_mapping");
+      return;
+    }
+    store.getState().setGnuCashImportId(receipt.import_id);
+    deps.addSystemMessage("Import committed. Checking balances against GnuCash…", "info");
+    store.getState().setPhase("gnucash_import_reconciling");
+    const pickedPath = store.getState().gnucashPickedPath ?? "";
+    try {
+      const report = await deps.reconcileGnuCashImport(receipt.import_id, pickedPath);
+      deps.addGnuCashReconcileMessage(report);
+    } catch {
+      deps.addSystemMessage(
+        "Import committed, but I couldn't check the balances against GnuCash. You can keep the import by typing 'continue', or type 'rollback' to undo it.",
+        "error",
+      );
+    }
+  }
+
+  async function handleAcceptReconcile(): Promise<void> {
+    const { householdName, accounts, envelopes } = store.getState().draft;
+    deps.addHandoffMessage(
+      householdName || "Your household",
+      accounts.length,
+      envelopes.length,
+      STARTER_PROMPTS,
+    );
+    store.getState().setPhase("gnucash_import_done");
+  }
+
+  async function handleRollbackReconcile(): Promise<void> {
+    const importId = store.getState().gnucashImportId;
+    if (importId) {
+      await deps.rollbackGnuCashImport(importId);
+    }
+    store.getState().setGnuCashImportId(null);
+    store.getState().setGnuCashPickedPath(null);
+    deps.addSystemMessage(
+      "Import rolled back. Pick a GnuCash file to try again, or skip migration.",
+      "info",
+    );
+    store.getState().setPhase("gnucash_import_pick_file");
+  }
+
+  function phase() {
+    return store.getState().phase;
+  }
+
+  return { checkAndStart, handleInput, handleFilePicked, handleConfirmMapping, handleAcceptReconcile, handleRollbackReconcile, phase };
 }
 
 export function useOnboardingEngine() {
   const addSystemMessage = useChatStore((s) => s.addSystemMessage);
   const addSetupCard = useChatStore((s) => s.addSetupCard);
   const addHandoffMessage = useChatStore((s) => s.addHandoffMessage);
+  const addGnuCashMappingMessage = useChatStore((s) => s.addGnuCashMappingMessage);
+  const addGnuCashReconcileMessage = useChatStore((s) => s.addGnuCashReconcileMessage);
   const phase = useOnboardingStore((s) => s.phase);
   const invalidateSidebar = useInvalidateSidebar();
 
-  const deps: OnboardingDeps = {
-    addSystemMessage,
-    addSetupCard,
-    addHandoffMessage,
-    invoke: tauriInvoke,
-    invalidateSidebar,
-  };
-
-  const handler = buildOnboardingHandler(deps);
-
-  useEffect(() => {
-    void handler.checkAndStart();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleInput = useCallback(
-    (text: string) => handler.handleInput(text),
-    // deps change reference each render but behavior is stable — rebuild handler on each call is fine
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const readGnuCashFile = useCallback(
+    (path: string) => tauriInvoke<GnuCashPreview>("read_gnucash_file", { path }),
+    [],
+  );
+  const gnucashBuildDefaultPlan = useCallback(
+    (path: string) => tauriInvoke<ImportPlan>("gnucash_build_default_plan", { path }),
+    [],
+  );
+  const gnucashApplyMappingEdit = useCallback(
+    (edit: MappingEdit) => tauriInvoke<ImportPlan>("gnucash_apply_mapping_edit", { edit }),
+    [],
+  );
+  const commitGnuCashImport = useCallback(
+    () => tauriInvoke<ImportReceipt>("gnucash_commit_import", {}),
+    [],
+  );
+  const reconcileGnuCashImport = useCallback(
+    (importId: string, path: string) =>
+      tauriInvoke<GnuCashReconcileReport>("reconcile_gnucash_import", { import_id: importId, path }),
+    [],
+  );
+  const rollbackGnuCashImport = useCallback(
+    (importId: string) => tauriInvoke<void>("rollback_gnucash_import", { import_id: importId }),
     [],
   );
 
+  const deps: OnboardingDeps = useMemo(
+    () => ({
+      addSystemMessage,
+      addSetupCard,
+      addHandoffMessage,
+      addGnuCashMappingMessage,
+      addGnuCashReconcileMessage,
+      invoke: tauriInvoke,
+      invalidateSidebar,
+      readGnuCashFile,
+      gnucashBuildDefaultPlan,
+      gnucashApplyMappingEdit,
+      commitGnuCashImport,
+      reconcileGnuCashImport,
+      rollbackGnuCashImport,
+    }),
+    [
+      addSystemMessage,
+      addSetupCard,
+      addHandoffMessage,
+      addGnuCashMappingMessage,
+      addGnuCashReconcileMessage,
+      invalidateSidebar,
+      readGnuCashFile,
+      gnucashBuildDefaultPlan,
+      gnucashApplyMappingEdit,
+      commitGnuCashImport,
+      reconcileGnuCashImport,
+      rollbackGnuCashImport,
+    ],
+  );
+
+  const handler = useMemo(() => buildOnboardingHandler(deps), [deps]);
+
+  useEffect(() => {
+    void handler.checkAndStart();
+    // Run only once on mount — handler identity is stable via useMemo
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return {
     isActive: phase !== "complete",
-    handleInput,
+    handleInput: handler.handleInput,
+    handleFilePicked: handler.handleFilePicked,
+    handleConfirmMapping: handler.handleConfirmMapping,
+    handleAcceptReconcile: handler.handleAcceptReconcile,
+    handleRollbackReconcile: handler.handleRollbackReconcile,
   };
 }

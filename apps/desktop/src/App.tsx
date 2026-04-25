@@ -54,7 +54,13 @@ export default function App() {
       <div id="app-shell" className={styles.shell}>
         <HealthSidebar state={sidebarState} onToggle={toggleSidebar} />
         <main className={styles.main}>
-          <ChatThread onPromptClick={onSend} />
+          <ChatThread
+            onPromptClick={onSend}
+            onSubmitGnuCashPath={onboarding.handleFilePicked}
+            onConfirmMapping={onboarding.handleConfirmMapping}
+            onAcceptReconcile={onboarding.handleAcceptReconcile}
+            onRollbackReconcile={onboarding.handleRollbackReconcile}
+          />
           <InputBar onSend={onSend} isStreaming={false} />
         </main>
       </div>

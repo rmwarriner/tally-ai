@@ -14,9 +14,13 @@ function isNearBottom(element: HTMLDivElement): boolean {
 
 interface ChatThreadProps {
   onPromptClick?: (prompt: string) => void;
+  onSubmitGnuCashPath?: (path: string) => void;
+  onConfirmMapping?: () => void;
+  onAcceptReconcile?: () => void;
+  onRollbackReconcile?: () => void;
 }
 
-export function ChatThread({ onPromptClick }: ChatThreadProps = {}) {
+export function ChatThread({ onPromptClick, onSubmitGnuCashPath, onConfirmMapping, onAcceptReconcile, onRollbackReconcile }: ChatThreadProps = {}) {
   const threadRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const previousNewestMessageIdRef = useRef<string | null>(null);
@@ -128,7 +132,14 @@ export function ChatThread({ onPromptClick }: ChatThreadProps = {}) {
         ) : null}
 
         {messages.length > 0 ? (
-          <MessageList messages={messages} onPromptClick={onPromptClick} />
+          <MessageList
+            messages={messages}
+            onPromptClick={onPromptClick}
+            onSubmitGnuCashPath={onSubmitGnuCashPath}
+            onConfirmMapping={onConfirmMapping}
+            onAcceptReconcile={onAcceptReconcile}
+            onRollbackReconcile={onRollbackReconcile}
+          />
         ) : (
           <p className={styles.placeholder}>No messages yet.</p>
         )}

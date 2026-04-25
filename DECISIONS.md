@@ -22,6 +22,21 @@ Each decision follows this format:
 
 ## Active Decisions
 
+### 2026-04-24 — Persist GnuCash GUID on imported accounts
+
+**Decision**: Imported accounts carry their GnuCash GUID in a new `accounts.gnc_guid` column (migration 0007). The reconciler queries Tally rows by this GUID rather than matching on account name.
+
+**Rationale**: Leaf-name matching was unsound — a GnuCash book legitimately can have two accounts with the same leaf name under different parents (e.g. `Assets:Cash:Savings` vs `Investments:Savings`). GUID is canonical and index-friendly.
+
+**Status**: Accepted
+
+**Consequences**:
+- Reconcile performance is O(n log n) via the `idx_accounts_gnc_guid` partial index.
+- Manual account creation (non-imported) leaves `gnc_guid = NULL`; the partial index keeps the table scan shape unchanged for those rows.
+- If a future ticket adds "re-import" semantics, it has a clean key to match on.
+
+---
+
 ### 2026-04-17 — Money as Integer Cents
 
 **Decision**: All monetary amounts are stored as INTEGER cents in the database, never FLOAT or REAL.
@@ -145,6 +160,21 @@ Each decision follows this format:
 - Beta users must save their GnuCash book with "File → Save As → SQLite" before importing
 - Idempotency is anchored on GnuCash transaction GUIDs — re-runs are safe
 - XML-backed books are a Phase 2 concern if a beta user requests it
+
+---
+
+### 2026-04-24 — GnuCash Mapping Card as Top-Level Message Kind
+
+**Decision**: The GnuCash CoA mapping preview is rendered as a new top-level chat message `kind: "gnucash_mapping"` dispatched from `MessageList.tsx`, not as an `artifact` variant via `ArtifactCard.tsx`.
+
+**Rationale**: The existing `artifact` message kind's payload is `{ artifact_id, title, content?: string }` with `content` as plain text — it's not a discriminated-union-with-typed-payloads dispatcher. Existing rich renderers (`LedgerTable`, `BalanceReport`) sit outside that path unwired. Converting the `artifact` kind into a typed-payload union and retro-fitting the existing renderers was out of scope for T-072; the one-component-per-rich-kind pattern (already used by `TransactionCard`, `HandoffMessage`, `SetupCard`) is the more honest fit.
+
+**Status**: Accepted
+
+**Consequences**:
+- Each rich chat artifact currently lives under its own message kind — `gnucash_mapping` joins `transaction_card`, `handoff`, `setup_card`.
+- If a future ticket consolidates rich artifact rendering under a typed-payload `artifact` dispatcher, `GnuCashMappingCard`, `GnuCashReconcileCard` (T-074), `LedgerTable`, and `BalanceReport` would migrate together — a deliberate refactor, not an incremental change.
+- The plan's sketched `reply.messages.some(m => m.kind === "artifact" && m.artifact === "gnucash_mapping")` test pattern was replaced with `addGnuCashMappingMessage` store-action assertions, consistent with how other onboarding-side-effect handlers are tested.
 
 ---
 

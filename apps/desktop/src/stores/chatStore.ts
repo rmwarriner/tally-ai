@@ -2,6 +2,8 @@ import { create } from "zustand";
 
 import type { ChatMessage } from "../components/chat/chatTypes";
 import type { SetupCardVariant } from "../components/onboarding/SetupCard";
+import type { ImportPlan } from "@tally/core-types";
+import type { GnuCashReconcileReport } from "../components/artifacts/GnuCashReconcileCard";
 import { generateUlid } from "../utils/ulid";
 
 interface ChatStore {
@@ -17,6 +19,8 @@ interface ChatStore {
     envelopeCount: number,
     starterPrompts: string[],
   ) => void;
+  addGnuCashMappingMessage: (plan: ImportPlan) => void;
+  addGnuCashReconcileMessage: (report: GnuCashReconcileReport) => void;
   updateMessage: (id: string, patch: Partial<ChatMessage>) => void;
   removeMessage: (id: string) => void;
 }
@@ -75,6 +79,20 @@ export const useChatStore = create<ChatStore>((set) => ({
       accountCount,
       envelopeCount,
       starterPrompts,
+    };
+    set((state) => ({ localMessages: [...state.localMessages, message] }));
+  },
+  addGnuCashMappingMessage: (plan) => {
+    const message: ChatMessage = {
+      ...makeBaseMessage("gnucash_mapping"),
+      plan,
+    };
+    set((state) => ({ localMessages: [...state.localMessages, message] }));
+  },
+  addGnuCashReconcileMessage: (report) => {
+    const message: ChatMessage = {
+      ...makeBaseMessage("gnucash_reconcile"),
+      report,
     };
     set((state) => ({ localMessages: [...state.localMessages, message] }));
   },

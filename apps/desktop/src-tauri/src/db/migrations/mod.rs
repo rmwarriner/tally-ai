@@ -895,6 +895,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_migration_0006_adds_source_ref_and_import_id() {
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_0006.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool).await.expect("Migrations should run");
+
+        // transactions.source_ref exists
+        let txn_schema: (String,) = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='transactions'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("transactions table should exist");
+        assert!(
+            txn_schema.0.contains("source_ref"),
+            "transactions.source_ref column missing"
+        );
+
+        // accounts.import_id exists
+        let acc_schema: (String,) = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='accounts'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("accounts table should exist");
+        assert!(
+            acc_schema.0.contains("import_id"),
+            "accounts.import_id column missing"
+        );
+
+        // Unique (household_id, source_ref) index exists
+        let indexes: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='transactions'",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("Should query indexes");
+        let names: Vec<&str> = indexes.iter().map(|(n,)| n.as_str()).collect();
+        assert!(
+            names.contains(&"idx_transactions_source_ref_unique"),
+            "missing idx_transactions_source_ref_unique"
+        );
+
+        // Lock in the critical properties of the idempotency index
+        let unique_idx_sql: (String,) = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_transactions_source_ref_unique'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("unique index should exist");
+        assert!(
+            unique_idx_sql.0.contains("UNIQUE"),
+            "idempotency index must be UNIQUE"
+        );
+        assert!(
+            unique_idx_sql.0.contains("source_ref IS NOT NULL"),
+            "index must be partial (WHERE source_ref IS NOT NULL) to allow multiple NULL source_refs per household"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_migration_0007_adds_gnc_guid() {
+        let dir = tempdir().expect("Should create temp dir");
+        let db_path = dir.path().join("test_0007.db");
+        let salt = [0u8; 16];
+
+        let pool = create_encrypted_db(&db_path, "passphrase", &salt)
+            .await
+            .expect("Should create database");
+
+        run_migrations(&pool).await.expect("Migrations should run");
+
+        let acc_schema: (String,) = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='accounts'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("accounts table should exist");
+        assert!(acc_schema.0.contains("gnc_guid"), "accounts.gnc_guid column missing");
+
+        let idx_sql: Option<(String,)> = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_accounts_gnc_guid'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("Should query index");
+        let idx = idx_sql.expect("idx_accounts_gnc_guid should exist");
+        assert!(idx.0.contains("gnc_guid IS NOT NULL"), "index must be partial");
+    }
+
+    #[tokio::test]
     async fn test_envelope_spent_ignores_pending_transactions() {
         use std::time::{SystemTime, UNIX_EPOCH};
 

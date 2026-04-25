@@ -34,6 +34,12 @@ pub fn run() {
             commands::get_account_balances,
             commands::get_current_envelope_periods,
             commands::get_pending_transactions,
+            commands::read_gnucash_file,
+            commands::gnucash_build_default_plan,
+            commands::gnucash_apply_mapping_edit,
+            commands::commit_gnucash_import,
+            commands::rollback_gnucash_import,
+            commands::reconcile_gnucash_import,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

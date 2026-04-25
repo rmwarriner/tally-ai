@@ -111,3 +111,29 @@ describe("migration step progression", () => {
     expect(useOnboardingStore.getState().draft.hledgerContent).toBe("; sample journal");
   });
 });
+
+describe("GnuCash import state in store", () => {
+  it("starts with gnucashPickedPath as null", () => {
+    expect(useOnboardingStore.getState().gnucashPickedPath).toBeNull();
+  });
+
+  it("starts with gnucashImportId as null", () => {
+    expect(useOnboardingStore.getState().gnucashImportId).toBeNull();
+  });
+
+  it("setGnuCashPickedPath stores the path", () => {
+    useOnboardingStore.getState().setGnuCashPickedPath("/Users/me/book.gnucash");
+    expect(useOnboardingStore.getState().gnucashPickedPath).toBe("/Users/me/book.gnucash");
+  });
+
+  it("setGnuCashImportId stores the id", () => {
+    useOnboardingStore.getState().setGnuCashImportId("imp-999");
+    expect(useOnboardingStore.getState().gnucashImportId).toBe("imp-999");
+  });
+
+  it("setGnuCashPickedPath can clear the path", () => {
+    useOnboardingStore.getState().setGnuCashPickedPath("/tmp/book.gnucash");
+    useOnboardingStore.getState().setGnuCashPickedPath(null);
+    expect(useOnboardingStore.getState().gnucashPickedPath).toBeNull();
+  });
+});

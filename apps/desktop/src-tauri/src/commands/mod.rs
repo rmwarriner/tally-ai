@@ -29,6 +29,7 @@ use crate::secrets::{
 pub struct AppState {
     pub pool: Mutex<Option<SqlitePool>>,
     pub household_id: Mutex<Option<String>>,
+    pub active_import: Mutex<Option<crate::core::import::gnucash::ImportPlan>>,
 }
 
 impl AppState {
@@ -36,6 +37,7 @@ impl AppState {
         Self {
             pool: Mutex::new(None),
             household_id: Mutex::new(None),
+            active_import: Mutex::new(None),
         }
     }
 }
@@ -648,6 +650,173 @@ pub async fn get_pending_transactions(
         .ok_or("Household not set")?;
 
     read_coming_up(&pool, &household_id, now_ms(), 50)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ── GnuCash import commands ──────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ReadGnuCashArgs {
+    pub path: String,
+}
+
+#[tauri::command]
+pub async fn read_gnucash_file(
+    args: ReadGnuCashArgs,
+) -> Result<crate::core::import::gnucash::GnuCashPreview, String> {
+    use std::path::Path;
+    crate::core::import::gnucash::reader::preview(Path::new(&args.path))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Deserialize)]
+pub struct BuildImportPlanArgs {
+    pub path: String,
+}
+
+#[tauri::command]
+pub async fn gnucash_build_default_plan(
+    state: State<'_, AppState>,
+    args: BuildImportPlanArgs,
+) -> Result<crate::core::import::gnucash::ImportPlan, String> {
+    use crate::core::import::gnucash::{mapper, reader};
+    use std::path::Path;
+
+    let household_id = {
+        let g = state.household_id.lock().expect("household_id");
+        g.clone().ok_or_else(|| "No household configured".to_string())?
+    };
+    let book = reader::read(Path::new(&args.path))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let import_id = new_ulid();
+    let plan = mapper::build_default_plan(household_id, import_id, &book, new_ulid)
+        .map_err(|e| e.to_string())?;
+
+    *state.active_import.lock().expect("active_import") = Some(plan.clone());
+    Ok(plan)
+}
+
+#[derive(Deserialize)]
+pub struct ApplyMappingEditArgs {
+    pub edit: crate::core::import::gnucash::mapper::MappingEdit,
+}
+
+#[tauri::command]
+pub async fn gnucash_apply_mapping_edit(
+    state: State<'_, AppState>,
+    args: ApplyMappingEditArgs,
+) -> Result<crate::core::import::gnucash::ImportPlan, String> {
+    use crate::core::import::gnucash::mapper;
+
+    let mut guard = state.active_import.lock().expect("active_import");
+    let plan = guard.as_mut().ok_or_else(|| "No active import plan".to_string())?;
+    mapper::apply_mapping_edit(plan, &args.edit).map_err(|e| e.to_string())?;
+    Ok(plan.clone())
+}
+
+#[tauri::command]
+pub async fn commit_gnucash_import(
+    state: State<'_, AppState>,
+) -> Result<crate::core::import::gnucash::ImportReceipt, String> {
+    let pool_opt = state.pool.lock().expect("pool").clone();
+    let pool = pool_opt.ok_or_else(|| "No database open".to_string())?;
+
+    let plan = {
+        let g = state.active_import.lock().expect("active_import");
+        g.clone().ok_or_else(|| "No active import plan".to_string())?
+    };
+
+    let receipt = crate::core::import::gnucash::committer::commit(&pool, &plan, now_ms())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    *state.active_import.lock().expect("active_import") = None;
+    Ok(receipt)
+}
+
+#[derive(Deserialize)]
+pub struct RollbackArgs {
+    pub import_id: String,
+}
+
+#[tauri::command]
+pub async fn rollback_gnucash_import(
+    state: State<'_, AppState>,
+    args: RollbackArgs,
+) -> Result<(), String> {
+    let pool_opt = state.pool.lock().expect("pool").clone();
+    let pool = pool_opt.ok_or_else(|| "No database open".to_string())?;
+    crate::core::import::gnucash::committer::rollback(&pool, &args.import_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Deserialize)]
+pub struct ReconcileArgs {
+    pub import_id: String,
+    pub path: String,
+}
+
+#[tauri::command]
+pub async fn reconcile_gnucash_import(
+    state: State<'_, AppState>,
+    args: ReconcileArgs,
+) -> Result<crate::core::import::gnucash::reconcile::BalanceReportArtifact, String> {
+    use crate::core::import::gnucash::{reader, reconcile, AccountMapping, ImportPlan};
+    use std::path::Path;
+
+    let pool_opt = state.pool.lock().expect("pool").clone();
+    let pool = pool_opt.ok_or_else(|| "No database open".to_string())?;
+    let household_id = state.household_id.lock().expect("hh").clone()
+        .ok_or_else(|| "No household configured".to_string())?;
+
+    let book = reader::read(Path::new(&args.path))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Rebuild minimal AccountMapping set from accounts table (rows stamped with this import_id).
+    // Query by gnc_guid directly — leaf-name matching is unsound for books with repeated
+    // leaf names under different parents (e.g. Assets:Savings vs Investments:Savings).
+    #[derive(sqlx::FromRow)]
+    struct Row { id: String, name: String, gnc_guid: Option<String> }
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT id, name, gnc_guid FROM accounts WHERE household_id = ? AND import_id = ?",
+    )
+    .bind(&household_id)
+    .bind(&args.import_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let by_guid: std::collections::HashMap<&str, &crate::core::import::gnucash::GncAccount> =
+        book.accounts.iter().map(|a| (a.guid.as_str(), a)).collect();
+
+    let account_mappings: Vec<AccountMapping> = rows.iter().filter_map(|r| {
+        let guid = r.gnc_guid.as_deref()?;
+        let ga = by_guid.get(guid)?;
+        Some(AccountMapping {
+            gnc_guid: guid.to_string(),
+            gnc_full_name: ga.full_name.clone(),
+            tally_account_id: r.id.clone(),
+            tally_name: r.name.clone(),
+            tally_parent_id: None,
+            tally_type: crate::core::import::gnucash::AccountType::Asset,
+            tally_normal_balance: crate::core::import::gnucash::NormalBalance::Debit,
+        })
+    }).collect();
+
+    let plan = ImportPlan {
+        household_id,
+        import_id: args.import_id,
+        account_mappings,
+        transactions: vec![], // unused by reconcile
+    };
+
+    reconcile::reconcile(&pool, &plan, &book)
         .await
         .map_err(|e| e.to_string())
 }

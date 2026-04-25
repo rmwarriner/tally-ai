@@ -4,6 +4,8 @@ import type {
 } from "./TransactionCard.types";
 
 import type { SetupCardVariant } from "../onboarding/SetupCard";
+import type { ImportPlan } from "@tally/core-types";
+import type { GnuCashReconcileReport } from "../artifacts/GnuCashReconcileCard";
 
 export interface ProposedLine {
   account_id: string;
@@ -61,4 +63,16 @@ export type ChatMessage =
       accountCount: number;
       envelopeCount: number;
       starterPrompts: string[];
+    }
+  | {
+      kind: "gnucash_mapping";
+      id: string;
+      ts: number;
+      plan: ImportPlan;
+    }
+  | {
+      kind: "gnucash_reconcile";
+      id: string;
+      ts: number;
+      report: GnuCashReconcileReport;
     };
