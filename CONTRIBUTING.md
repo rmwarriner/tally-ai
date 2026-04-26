@@ -56,6 +56,23 @@ chore: update dependencies
 - **Rust core validates** — `TransactionProposal` → `ValidationResult` → commit or reject
 - **Tool use only** — Claude API should use tool use, never free-form text parsing
 
+## Documentation discipline
+
+When a `feat:` PR lands ticket work, update the **Implementation status**
+section of `CLAUDE.md` in the same PR. The section is the source of truth
+for "what's currently shipped" and review depends on it being current.
+
+- New components or hooks: add a one-line entry under the relevant subsection.
+- New Tauri commands or migrations: add a one-line entry.
+- Behavior changes that update an existing entry: edit the existing line in place.
+
+If the change is documentation-only (no code), skip the status update.
+
+## Architectural decisions
+
+Any architectural choice not covered by the Phase 1 spec is logged in
+`DECISIONS.md` *before* implementation, in the same PR. See the file for format.
+
 ## Testing
 
 Tests are required before merging:

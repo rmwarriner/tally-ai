@@ -43,6 +43,9 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 - Commit messages: conventional commits format (feat:, fix:, test:, docs:).
 
+- Update the "Implementation status" section in this file as part of any
+  feat: PR that lands ticket work. See CONTRIBUTING.md for detail.
+
 ## Key types (Rust)
 
 - TransactionProposal: what the AI returns for entry intents
@@ -142,6 +145,14 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 - New top-level message kinds `gnucash_mapping`, `gnucash_reconcile`
   (see DECISIONS.md 2026-04-24).
 - Migrations 0006, 0007.
+
+**Validation behavior matrix (T-060):**
+- `core::validation_matrix` is the canonical inventory of validation behaviors.
+  Tier 1 (8 HardError variants), Tier 2 (5 SoftWarning variants), Tier 3
+  (4 AIAdvisory builders). Every variant has +/- tests asserting the recovery
+  action set against actual code. New rules MUST add a row to this matrix.
+- Two follow-ups filed: `EnvelopeMismatch` unimplemented (#113);
+  `PossibleDuplicate` rule scoping (#114).
 
 ## Phase 2 stubs (TODO(phase2) in code)
 
