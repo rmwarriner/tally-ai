@@ -115,6 +115,14 @@ impl RecoveryError {
     }
 }
 
+impl std::fmt::Display for RecoveryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for RecoveryError {}
+
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("Database error: {0}")]
@@ -309,5 +317,18 @@ mod tests {
         assert_eq!(err.message, "plain message");
         assert_eq!(err.recovery.first().kind, RecoveryKind::Discard);
         assert!(err.recovery.first().is_primary);
+    }
+
+    #[test]
+    fn recovery_error_implements_std_error_for_question_mark_propagation() {
+        fn returns_recovery_error() -> Result<(), RecoveryError> {
+            Err(RecoveryError::discard("nope"))
+        }
+        fn caller() -> Result<(), Box<dyn std::error::Error>> {
+            returns_recovery_error()?;
+            Ok(())
+        }
+        let err = caller().unwrap_err();
+        assert_eq!(err.to_string(), "nope");
     }
 }
