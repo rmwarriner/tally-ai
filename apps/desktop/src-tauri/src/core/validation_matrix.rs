@@ -185,7 +185,6 @@ fn hard_codes(result: &ValidationResult) -> Vec<HardErrorCode> {
     }
 }
 
-#[allow(dead_code)] // used by Task 5 (Tier 2) tests
 fn soft_codes(result: &ValidationResult) -> Vec<SoftWarningCode> {
     match result {
         ValidationResult::Warnings { warnings, .. } => {
@@ -202,7 +201,6 @@ fn recovery_kinds_of_hard(err: &HardError) -> Vec<RecoveryKind> {
     err.actions.iter().map(|a| a.kind.clone()).collect()
 }
 
-#[allow(dead_code)] // used by Task 5 (Tier 2) tests
 fn recovery_kinds_of_soft(warn: &SoftWarning) -> Vec<RecoveryKind> {
     warn.actions.iter().map(|a| a.kind.clone()).collect()
 }
@@ -635,3 +633,474 @@ async fn tier1_envelope_mismatch_does_not_trigger_when_clean() {
 // no edge case applicable — rule is unimplemented; once it lands, an edge
 // (e.g. envelope on an income line, or envelope on a debit-side expense)
 // should be added.
+
+// === Task 5: Tier 2 (SoftWarning) matrix ==================================
+//
+// Each variant has at least:
+//   - `tier2_<variant>_triggers` — mutate baseline to trip the warning.
+//   - `tier2_<variant>_does_not_trigger_when_clean` — clean baseline.
+//   - `tier2_<variant>_edge_<scenario>` — boundary case where meaningful.
+//
+// Recovery action expectations are verified against `validation.rs`
+// (`soft_warning(..., primary_action, vec![extras...])`) — *not* the design
+// table — so the test reflects what the validator actually emits.
+//
+// Discoveries vs. the original design table for Tier 2:
+//   - FutureDate / StaleDate / LargeAmount: validator emits `EditField`
+//     primary + `PostAnyway` extra. NO `Discard`. Table claimed primary
+//     `PostAnyway`; that was wrong.
+//   - EnvelopeOverdraft: validator emits `PostAnyway` primary +
+//     `EditField` ("Change envelope") extra. NO `Discard`. Table claimed
+//     a `Discard` extra; that was wrong.
+//   - PossibleDuplicate: matches the table — `PostAnyway` primary +
+//     `Discard` extra.
+
+/// Look up the credit-card account on a seeded household. Used as a
+/// credit-normal counter-account when the test needs to push a large amount
+/// without tripping `AbnormalBalance` on Cash. (Cash only has $100 of opening
+/// balance — $500.01 against it goes negative.)
+async fn credit_card_account_id(pool: &SqlitePool, household_id: &str) -> String {
+    let (id,): (String,) = sqlx::query_as(
+        "SELECT id FROM accounts WHERE household_id = ? AND name = 'Credit Card' AND is_placeholder = 0",
+    )
+    .bind(household_id)
+    .fetch_one(pool)
+    .await
+    .expect("look up Credit Card");
+    id
+}
+
+/// Allocates `cents` to the seeded grocery envelope's current period so
+/// overdraft-edge tests can pin the boundary precisely. The default seed
+/// allocates 0, which makes "exactly at cap" indistinguishable from the
+/// trigger case.
+async fn set_grocery_allocation(pool: &SqlitePool, envelope_id: &str, cents: i64) {
+    sqlx::query(
+        "UPDATE envelope_periods SET allocated = ? WHERE envelope_id = ?",
+    )
+    .bind(cents)
+    .bind(envelope_id)
+    .execute(pool)
+    .await
+    .expect("update allocation");
+}
+
+/// Inserts a posted transaction with a single debit + single credit line so
+/// the duplicate detector (which matches by `SUM(debit) GROUP BY t.id`)
+/// finds it. Mirrors `validation.rs::tests::soft_warn_possible_duplicate`.
+async fn seed_posted_txn(
+    pool: &SqlitePool,
+    household_id: &str,
+    debit_account_id: &str,
+    credit_account_id: &str,
+    amount_cents: i64,
+    txn_date_ms: i64,
+) {
+    let txn_id = new_ulid();
+    sqlx::query(
+        "INSERT INTO transactions
+             (id, household_id, txn_date, entry_date, status, source, created_at)
+         VALUES (?, ?, ?, 0, 'posted', 'manual', 0)",
+    )
+    .bind(&txn_id)
+    .bind(household_id)
+    .bind(txn_date_ms)
+    .execute(pool)
+    .await
+    .expect("seed posted txn");
+
+    sqlx::query(
+        "INSERT INTO journal_lines
+             (id, transaction_id, account_id, amount, side, created_at)
+         VALUES (?, ?, ?, ?, 'debit', 0)",
+    )
+    .bind(new_ulid())
+    .bind(&txn_id)
+    .bind(debit_account_id)
+    .bind(amount_cents)
+    .execute(pool)
+    .await
+    .expect("seed posted debit");
+
+    sqlx::query(
+        "INSERT INTO journal_lines
+             (id, transaction_id, account_id, amount, side, created_at)
+         VALUES (?, ?, ?, ?, 'credit', 0)",
+    )
+    .bind(new_ulid())
+    .bind(&txn_id)
+    .bind(credit_account_id)
+    .bind(amount_cents)
+    .execute(pool)
+    .await
+    .expect("seed posted credit");
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+fn find_soft<'a>(
+    result: &'a ValidationResult,
+    code: SoftWarningCode,
+) -> Option<&'a SoftWarning> {
+    match result {
+        ValidationResult::Warnings { warnings, .. } => {
+            warnings.iter().find(|w| w.code == code)
+        }
+        ValidationResult::Rejected { warnings, .. } => {
+            warnings.iter().find(|w| w.code == code)
+        }
+        _ => None,
+    }
+}
+
+// --- FutureDate -----------------------------------------------------------
+//
+// Threshold: `txn_date_ms > now_ms + ONE_DAY_MS` (strictly greater).
+// Recovery: `EditField` primary, `PostAnyway` extra. No `Discard`.
+
+#[tokio::test]
+async fn tier2_future_date_triggers() {
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let mut p = baseline_proposal_for(&seed);
+    p.txn_date_ms = now_ms() + 90 * ONE_DAY_MS;
+
+    let result = validate_proposal(&pool, &p).await;
+
+    assert!(
+        soft_codes(&result).contains(&SoftWarningCode::FutureDate),
+        "expected FutureDate but got: {:?}",
+        soft_codes(&result),
+    );
+    let warn = find_soft(&result, SoftWarningCode::FutureDate)
+        .expect("FutureDate warn present");
+    let kinds = recovery_kinds_of_soft(warn);
+    assert!(
+        first_kind_is(&kinds, RecoveryKind::EditField),
+        "primary recovery for FutureDate: expected EditField, got {:?}",
+        kinds.first(),
+    );
+    assert!(
+        kinds_contain(&kinds, RecoveryKind::PostAnyway),
+        "FutureDate should also offer PostAnyway, got {:?}",
+        kinds,
+    );
+}
+
+#[tokio::test]
+async fn tier2_future_date_does_not_trigger_when_clean() {
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let p = baseline_proposal_for(&seed);
+    let result = validate_proposal(&pool, &p).await;
+    assert!(!soft_codes(&result).contains(&SoftWarningCode::FutureDate));
+}
+
+#[tokio::test]
+async fn tier2_future_date_edge_exactly_one_day_passes() {
+    // Boundary: `> now + ONE_DAY_MS` is strict. A txn dated exactly one day
+    // ahead must NOT trigger. (Use a small back-off below `now` to avoid
+    // racing the clock between the test computing `now` and the validator
+    // computing its own `now_ms`.)
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let mut p = baseline_proposal_for(&seed);
+    // Pick a value that is at-or-below `validator_now + ONE_DAY_MS` even if a
+    // few ms elapse between this line and the validator's clock read. Going
+    // ~5 seconds under the boundary keeps us safely on the "no warn" side.
+    p.txn_date_ms = now_ms() + ONE_DAY_MS - 5_000;
+
+    let result = validate_proposal(&pool, &p).await;
+    assert!(
+        !soft_codes(&result).contains(&SoftWarningCode::FutureDate),
+        "txn dated at-or-just-under +1 day should pass FutureDate, got {:?}",
+        soft_codes(&result),
+    );
+}
+
+// --- StaleDate ------------------------------------------------------------
+//
+// Threshold: `txn_date_ms < now_ms - NINETY_DAYS_MS` (strictly less).
+// Recovery: `EditField` primary, `PostAnyway` extra. No `Discard`.
+
+#[tokio::test]
+async fn tier2_stale_date_triggers() {
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let mut p = baseline_proposal_for(&seed);
+    p.txn_date_ms = now_ms() - 400 * ONE_DAY_MS;
+
+    let result = validate_proposal(&pool, &p).await;
+
+    assert!(
+        soft_codes(&result).contains(&SoftWarningCode::StaleDate),
+        "expected StaleDate but got: {:?}",
+        soft_codes(&result),
+    );
+    let warn = find_soft(&result, SoftWarningCode::StaleDate)
+        .expect("StaleDate warn present");
+    let kinds = recovery_kinds_of_soft(warn);
+    assert!(
+        first_kind_is(&kinds, RecoveryKind::EditField),
+        "primary recovery for StaleDate: expected EditField, got {:?}",
+        kinds.first(),
+    );
+    assert!(
+        kinds_contain(&kinds, RecoveryKind::PostAnyway),
+        "StaleDate should also offer PostAnyway, got {:?}",
+        kinds,
+    );
+}
+
+#[tokio::test]
+async fn tier2_stale_date_does_not_trigger_when_clean() {
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let p = baseline_proposal_for(&seed);
+    let result = validate_proposal(&pool, &p).await;
+    assert!(!soft_codes(&result).contains(&SoftWarningCode::StaleDate));
+}
+
+#[tokio::test]
+async fn tier2_stale_date_edge_exactly_ninety_days_passes() {
+    // Boundary: `< now - 90 days` is strict. Exactly 90 days back must NOT
+    // trigger. We pad a few seconds under the boundary to absorb the clock
+    // drift between this line and the validator's clock read.
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let mut p = baseline_proposal_for(&seed);
+    p.txn_date_ms = now_ms() - 90 * ONE_DAY_MS + 5_000;
+
+    let result = validate_proposal(&pool, &p).await;
+    assert!(
+        !soft_codes(&result).contains(&SoftWarningCode::StaleDate),
+        "txn dated at-or-just-under 90 days back should pass StaleDate, got {:?}",
+        soft_codes(&result),
+    );
+}
+
+// --- LargeAmount ----------------------------------------------------------
+//
+// Threshold: any line `amount_cents > LARGE_AMOUNT_CENTS` (= 50_000, $500).
+// Recovery: `EditField` primary, `PostAnyway` extra. No `Discard`.
+
+#[tokio::test]
+async fn tier2_large_amount_triggers() {
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let mut p = baseline_proposal_for(&seed);
+    // Use Credit Card (credit-normal liability) instead of Cash so a $500.01
+    // credit doesn't push Cash into AbnormalBalance and suppress the warning.
+    let cc_id = credit_card_account_id(&pool, &seed.household_id).await;
+    p.lines[1].account_id = cc_id;
+    p.lines[0].amount_cents = 50_001;
+    p.lines[1].amount_cents = 50_001;
+
+    let result = validate_proposal(&pool, &p).await;
+
+    assert!(
+        soft_codes(&result).contains(&SoftWarningCode::LargeAmount),
+        "expected LargeAmount but got: {:?}",
+        soft_codes(&result),
+    );
+    let warn = find_soft(&result, SoftWarningCode::LargeAmount)
+        .expect("LargeAmount warn present");
+    let kinds = recovery_kinds_of_soft(warn);
+    assert!(
+        first_kind_is(&kinds, RecoveryKind::EditField),
+        "primary recovery for LargeAmount: expected EditField, got {:?}",
+        kinds.first(),
+    );
+    assert!(
+        kinds_contain(&kinds, RecoveryKind::PostAnyway),
+        "LargeAmount should also offer PostAnyway, got {:?}",
+        kinds,
+    );
+}
+
+#[tokio::test]
+async fn tier2_large_amount_does_not_trigger_when_clean() {
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let p = baseline_proposal_for(&seed);
+    let result = validate_proposal(&pool, &p).await;
+    assert!(!soft_codes(&result).contains(&SoftWarningCode::LargeAmount));
+}
+
+#[tokio::test]
+async fn tier2_large_amount_edge_exact_threshold_passes() {
+    // Boundary: `> 50_000` is strict. A line of exactly $500.00 must NOT
+    // trigger. Use Credit Card again to avoid AbnormalBalance on Cash.
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let mut p = baseline_proposal_for(&seed);
+    let cc_id = credit_card_account_id(&pool, &seed.household_id).await;
+    p.lines[1].account_id = cc_id;
+    p.lines[0].amount_cents = 50_000;
+    p.lines[1].amount_cents = 50_000;
+
+    let result = validate_proposal(&pool, &p).await;
+    assert!(
+        !soft_codes(&result).contains(&SoftWarningCode::LargeAmount),
+        "amount exactly at threshold should pass LargeAmount, got {:?}",
+        soft_codes(&result),
+    );
+}
+
+// --- EnvelopeOverdraft ----------------------------------------------------
+//
+// Threshold: `spent + line.amount_cents > allocated` (strict). The seeded
+// envelope starts at allocated=0, spent=0. Tests adjust `allocated` so the
+// boundary is meaningful.
+// Recovery: `PostAnyway` primary, `EditField` ("Change envelope") extra.
+// No `Discard`.
+
+#[tokio::test]
+async fn tier2_envelope_overdraft_triggers() {
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    set_grocery_allocation(&pool, &seed.grocery_envelope_id, 1_000).await;
+    let mut p = baseline_proposal_for(&seed);
+    // Attach the envelope to the (debit) Groceries line. line amount=1500 >
+    // allocated=1000 → overdraft.
+    p.lines[0].envelope_id = Some(seed.grocery_envelope_id.clone());
+
+    let result = validate_proposal(&pool, &p).await;
+
+    assert!(
+        soft_codes(&result).contains(&SoftWarningCode::EnvelopeOverdraft),
+        "expected EnvelopeOverdraft but got: {:?}",
+        soft_codes(&result),
+    );
+    let warn = find_soft(&result, SoftWarningCode::EnvelopeOverdraft)
+        .expect("EnvelopeOverdraft warn present");
+    let kinds = recovery_kinds_of_soft(warn);
+    assert!(
+        first_kind_is(&kinds, RecoveryKind::PostAnyway),
+        "primary recovery for EnvelopeOverdraft: expected PostAnyway, got {:?}",
+        kinds.first(),
+    );
+    assert!(
+        kinds_contain(&kinds, RecoveryKind::EditField),
+        "EnvelopeOverdraft should also offer EditField (Change envelope), got {:?}",
+        kinds,
+    );
+}
+
+#[tokio::test]
+async fn tier2_envelope_overdraft_does_not_trigger_when_clean() {
+    // No envelope attached to any line → rule cannot fire.
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let p = baseline_proposal_for(&seed);
+    let result = validate_proposal(&pool, &p).await;
+    assert!(!soft_codes(&result).contains(&SoftWarningCode::EnvelopeOverdraft));
+}
+
+#[tokio::test]
+async fn tier2_envelope_overdraft_edge_exactly_at_cap_passes() {
+    // Boundary: `spent + amount > allocated` is strict. With spent=0 and
+    // allocated=1500, a line of exactly 1500 lands at the cap and must NOT
+    // trigger.
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    set_grocery_allocation(&pool, &seed.grocery_envelope_id, 1_500).await;
+    let mut p = baseline_proposal_for(&seed);
+    p.lines[0].envelope_id = Some(seed.grocery_envelope_id.clone());
+    // baseline amount is already 1500 — the exact boundary.
+
+    let result = validate_proposal(&pool, &p).await;
+    assert!(
+        !soft_codes(&result).contains(&SoftWarningCode::EnvelopeOverdraft),
+        "amount exactly at allocation should pass EnvelopeOverdraft, got {:?}",
+        soft_codes(&result),
+    );
+}
+
+// --- PossibleDuplicate ----------------------------------------------------
+//
+// Trigger: a posted transaction exists whose debit-side total equals the
+// proposal's debit-side total, dated within `ONE_DAY_MS` of the proposal.
+// Note: the rule does NOT filter by household, account, or payee — only by
+// debit total + date proximity.
+// Recovery: `PostAnyway` primary, `Discard` extra.
+
+#[tokio::test]
+async fn tier2_possible_duplicate_triggers() {
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let p = baseline_proposal_for(&seed);
+    // Seed a posted txn one day before the proposal date with the same
+    // $15.00 debit total.
+    seed_posted_txn(
+        &pool,
+        &seed.household_id,
+        &seed.expense_account_id,
+        &seed.cash_account_id,
+        1500,
+        p.txn_date_ms - ONE_DAY_MS,
+    )
+    .await;
+
+    let result = validate_proposal(&pool, &p).await;
+
+    assert!(
+        soft_codes(&result).contains(&SoftWarningCode::PossibleDuplicate),
+        "expected PossibleDuplicate but got: {:?}",
+        soft_codes(&result),
+    );
+    let warn = find_soft(&result, SoftWarningCode::PossibleDuplicate)
+        .expect("PossibleDuplicate warn present");
+    let kinds = recovery_kinds_of_soft(warn);
+    assert!(
+        first_kind_is(&kinds, RecoveryKind::PostAnyway),
+        "primary recovery for PossibleDuplicate: expected PostAnyway, got {:?}",
+        kinds.first(),
+    );
+    assert!(
+        kinds_contain(&kinds, RecoveryKind::Discard),
+        "PossibleDuplicate should also offer Discard, got {:?}",
+        kinds,
+    );
+}
+
+#[tokio::test]
+async fn tier2_possible_duplicate_does_not_trigger_when_clean() {
+    // No matching posted txn seeded → no duplicate.
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let p = baseline_proposal_for(&seed);
+    let result = validate_proposal(&pool, &p).await;
+    assert!(!soft_codes(&result).contains(&SoftWarningCode::PossibleDuplicate));
+}
+
+#[tokio::test]
+async fn tier2_possible_duplicate_edge_outside_window_passes() {
+    // Boundary: the rule looks for matches `WHERE ABS(t.txn_date - ?) <= ONE_DAY_MS`.
+    // A posted txn dated more than one day from the proposal must NOT trigger,
+    // even when the amount matches exactly.
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let p = baseline_proposal_for(&seed);
+    seed_posted_txn(
+        &pool,
+        &seed.household_id,
+        &seed.expense_account_id,
+        &seed.cash_account_id,
+        1500,
+        p.txn_date_ms - 3 * ONE_DAY_MS,
+    )
+    .await;
+
+    let result = validate_proposal(&pool, &p).await;
+    assert!(
+        !soft_codes(&result).contains(&SoftWarningCode::PossibleDuplicate),
+        "match outside ±1-day window should not trigger PossibleDuplicate, got {:?}",
+        soft_codes(&result),
+    );
+}
