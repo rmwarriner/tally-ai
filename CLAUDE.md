@@ -43,6 +43,9 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 - Commit messages: conventional commits format (feat:, fix:, test:, docs:).
 
+- Update the "Implementation status" section in this file as part of any
+  feat: PR that lands ticket work. See CONTRIBUTING.md for detail.
+
 ## Key types (Rust)
 
 - TransactionProposal: what the AI returns for entry intents
