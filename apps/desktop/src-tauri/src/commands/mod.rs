@@ -425,7 +425,9 @@ pub async fn import_hledger(args: ImportHledgerArgs) -> Result<String, String> {
 
 /// Returns AI defaults (timezone, default account). Stub for Phase 1.
 #[tauri::command]
-pub async fn get_ai_defaults(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn get_ai_defaults(
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, RecoveryError> {
     let hh_guard = state.household_id.lock().expect("household_id lock");
     if hh_guard.is_none() {
         return Ok(serde_json::json!({ "status": "No household configured" }));
@@ -464,19 +466,24 @@ pub struct AppendChatMessageArgs {
 pub async fn append_chat_message(
     state: State<'_, AppState>,
     args: AppendChatMessageArgs,
-) -> Result<(), String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<(), RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     ChatRepo::new(pool)
         .append(&household_id, &args.id, &args.kind, &args.payload, args.ts, now_ms())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -491,14 +498,19 @@ pub struct ListChatMessagesArgs {
 pub async fn list_chat_messages(
     state: State<'_, AppState>,
     args: ListChatMessagesArgs,
-) -> Result<Vec<ChatMessageRow>, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<Vec<ChatMessageRow>, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     let before_ts = args.before_ts.unwrap_or(i64::MAX);
     let limit = args.limit.unwrap_or(50).clamp(1, 500);
@@ -506,7 +518,7 @@ pub async fn list_chat_messages(
     ChatRepo::new(pool)
         .list_before(&household_id, before_ts, limit)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 // ── Chat turn orchestration ───────────────────────────────────────────────────
