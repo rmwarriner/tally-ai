@@ -12,7 +12,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sqlx::SqlitePool;
 use tempfile::tempdir;
 
-use crate::ai::advisories;
 use crate::core::coa::seed_chart_of_accounts;
 use crate::core::envelope::create_envelope_with_current_period;
 use crate::core::proposal::{ProposedLine, Side, TransactionProposal};
@@ -21,7 +20,7 @@ use crate::core::validation::{
     ValidationResult,
 };
 use crate::db::{connection::create_encrypted_db, migrations::run_migrations};
-use crate::error::{RecoveryAction, RecoveryKind};
+use crate::error::RecoveryKind;
 use crate::id::new_ulid;
 
 // Shared fixture helpers ---------------------------------------------------
