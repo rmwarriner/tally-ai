@@ -69,6 +69,52 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for NonEmpty<T> {
     }
 }
 
+/// Wire-shape carried by every `Result<T, RecoveryError>` returned from a
+/// `#[tauri::command]`. Translated by the frontend `safeInvoke` into a
+/// user-facing advisory or an inline error UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoveryError {
+    pub message: String,
+    pub recovery: NonEmpty<RecoveryAction>,
+}
+
+impl RecoveryError {
+    pub fn new(message: impl Into<String>, recovery: NonEmpty<RecoveryAction>) -> Self {
+        Self {
+            message: message.into(),
+            recovery,
+        }
+    }
+
+    pub fn show_help(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            recovery: NonEmpty::new(
+                RecoveryAction {
+                    kind: RecoveryKind::ShowHelp,
+                    label: "Get help".to_string(),
+                    is_primary: true,
+                },
+                vec![],
+            ),
+        }
+    }
+
+    pub fn discard(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            recovery: NonEmpty::new(
+                RecoveryAction {
+                    kind: RecoveryKind::Discard,
+                    label: "Discard".to_string(),
+                    is_primary: true,
+                },
+                vec![],
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("Database error: {0}")]
@@ -211,5 +257,57 @@ mod tests {
         let json = serde_json::to_string(&action).expect("serialize");
         let back: RecoveryAction = serde_json::from_str(&json).expect("deserialize");
         assert!(!back.is_primary);
+    }
+
+    // -- RecoveryError --
+
+    #[test]
+    fn recovery_error_serializes_with_message_and_recovery_array() {
+        let err = RecoveryError {
+            message: "Account does not exist".to_string(),
+            recovery: NonEmpty::new(
+                RecoveryAction {
+                    kind: RecoveryKind::CreateMissing,
+                    label: "Create account".to_string(),
+                    is_primary: true,
+                },
+                vec![RecoveryAction {
+                    kind: RecoveryKind::Discard,
+                    label: "Discard".to_string(),
+                    is_primary: false,
+                }],
+            ),
+        };
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["message"], "Account does not exist");
+        assert_eq!(json["recovery"][0]["kind"], "CREATE_MISSING");
+        assert_eq!(json["recovery"][1]["kind"], "DISCARD");
+    }
+
+    #[test]
+    fn recovery_error_deserializes_from_screaming_snake_keys() {
+        let json = serde_json::json!({
+            "message": "x",
+            "recovery": [{"kind": "SHOW_HELP", "label": "Help", "is_primary": true}],
+        });
+        let err: RecoveryError = serde_json::from_value(json).unwrap();
+        assert_eq!(err.message, "x");
+        assert_eq!(err.recovery.first().kind, RecoveryKind::ShowHelp);
+    }
+
+    #[test]
+    fn recovery_error_show_help_helper_produces_show_help_kind() {
+        let err = RecoveryError::show_help("plain message");
+        assert_eq!(err.message, "plain message");
+        assert_eq!(err.recovery.first().kind, RecoveryKind::ShowHelp);
+        assert!(err.recovery.first().is_primary);
+    }
+
+    #[test]
+    fn recovery_error_discard_helper_produces_discard_kind() {
+        let err = RecoveryError::discard("plain message");
+        assert_eq!(err.message, "plain message");
+        assert_eq!(err.recovery.first().kind, RecoveryKind::Discard);
+        assert!(err.recovery.first().is_primary);
     }
 }
