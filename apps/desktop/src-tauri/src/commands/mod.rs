@@ -80,12 +80,15 @@ fn now_ms() -> i64 {
 
 /// Returns true if a household already exists (DB file + household row present).
 #[tauri::command]
-pub async fn check_setup_status(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
-    let path = db_path(&app)?;
+pub async fn check_setup_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<bool, RecoveryError> {
+    let path = db_path(&app).map_err(RecoveryError::show_help)?;
     if !path.exists() {
         return Ok(false);
     }
-    let sp = salt_path(&app)?;
+    let sp = salt_path(&app).map_err(RecoveryError::show_help)?;
     if !sp.exists() {
         return Ok(false);
     }
@@ -95,7 +98,7 @@ pub async fn check_setup_status(app: AppHandle, state: State<'_, AppState>) -> R
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM households")
             .fetch_one(&pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| RecoveryError::show_help(e.to_string()))?;
         return Ok(count.0 > 0);
     }
     // DB file exists but pool isn't open — household exists (needs unlock flow).
@@ -403,7 +406,7 @@ pub struct ImportSummary {
 /// Stub hledger import — TODO(phase2): full parser with CoA mapping.
 /// Currently counts non-comment, non-blank lines and returns a summary.
 #[tauri::command]
-pub async fn import_hledger(args: ImportHledgerArgs) -> Result<String, String> {
+pub async fn import_hledger(args: ImportHledgerArgs) -> Result<String, RecoveryError> {
     let lines: Vec<&str> = args
         .content
         .lines()
