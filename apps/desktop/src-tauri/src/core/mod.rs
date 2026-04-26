@@ -6,3 +6,6 @@ pub mod ledger;
 pub mod proposal;
 pub mod read;
 pub mod validation;
+
+#[cfg(test)]
+mod validation_matrix;
