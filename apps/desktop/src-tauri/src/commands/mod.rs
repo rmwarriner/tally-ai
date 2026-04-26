@@ -787,11 +787,11 @@ pub struct ReadGnuCashArgs {
 #[tauri::command]
 pub async fn read_gnucash_file(
     args: ReadGnuCashArgs,
-) -> Result<crate::core::import::gnucash::GnuCashPreview, String> {
+) -> Result<crate::core::import::gnucash::GnuCashPreview, RecoveryError> {
     use std::path::Path;
     crate::core::import::gnucash::reader::preview(Path::new(&args.path))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -803,21 +803,22 @@ pub struct BuildImportPlanArgs {
 pub async fn gnucash_build_default_plan(
     state: State<'_, AppState>,
     args: BuildImportPlanArgs,
-) -> Result<crate::core::import::gnucash::ImportPlan, String> {
+) -> Result<crate::core::import::gnucash::ImportPlan, RecoveryError> {
     use crate::core::import::gnucash::{mapper, reader};
     use std::path::Path;
 
     let household_id = {
         let g = state.household_id.lock().expect("household_id");
-        g.clone().ok_or_else(|| "No household configured".to_string())?
+        g.clone()
+            .ok_or_else(|| RecoveryError::show_help("No household configured"))?
     };
     let book = reader::read(Path::new(&args.path))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     let import_id = new_ulid();
     let plan = mapper::build_default_plan(household_id, import_id, &book, new_ulid)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     *state.active_import.lock().expect("active_import") = Some(plan.clone());
     Ok(plan)
@@ -832,30 +833,52 @@ pub struct ApplyMappingEditArgs {
 pub async fn gnucash_apply_mapping_edit(
     state: State<'_, AppState>,
     args: ApplyMappingEditArgs,
-) -> Result<crate::core::import::gnucash::ImportPlan, String> {
+) -> Result<crate::core::import::gnucash::ImportPlan, RecoveryError> {
     use crate::core::import::gnucash::mapper;
 
     let mut guard = state.active_import.lock().expect("active_import");
-    let plan = guard.as_mut().ok_or_else(|| "No active import plan".to_string())?;
-    mapper::apply_mapping_edit(plan, &args.edit).map_err(|e| e.to_string())?;
+    let plan = guard
+        .as_mut()
+        .ok_or_else(|| RecoveryError::show_help("No active import plan"))?;
+    mapper::apply_mapping_edit(plan, &args.edit)
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
     Ok(plan.clone())
 }
 
 #[tauri::command]
 pub async fn commit_gnucash_import(
     state: State<'_, AppState>,
-) -> Result<crate::core::import::gnucash::ImportReceipt, String> {
+) -> Result<crate::core::import::gnucash::ImportReceipt, RecoveryError> {
     let pool_opt = state.pool.lock().expect("pool").clone();
-    let pool = pool_opt.ok_or_else(|| "No database open".to_string())?;
+    let pool = pool_opt.ok_or_else(|| RecoveryError::show_help("No database open"))?;
 
     let plan = {
         let g = state.active_import.lock().expect("active_import");
-        g.clone().ok_or_else(|| "No active import plan".to_string())?
+        g.clone()
+            .ok_or_else(|| RecoveryError::show_help("No active import plan"))?
     };
 
+    // Import-commit failures roll back atomically; offer Discard alongside ShowHelp
+    // so the user can abandon the import without leaving a partial state.
     let receipt = crate::core::import::gnucash::committer::commit(&pool, &plan, now_ms())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            RecoveryError::new(
+                format!("Could not import the GnuCash file: {e}"),
+                NonEmpty::new(
+                    RecoveryAction {
+                        kind: RecoveryKind::ShowHelp,
+                        label: "Get help".to_string(),
+                        is_primary: true,
+                    },
+                    vec![RecoveryAction {
+                        kind: RecoveryKind::Discard,
+                        label: "Discard import".to_string(),
+                        is_primary: false,
+                    }],
+                ),
+            )
+        })?;
 
     *state.active_import.lock().expect("active_import") = None;
     Ok(receipt)
@@ -870,12 +893,12 @@ pub struct RollbackArgs {
 pub async fn rollback_gnucash_import(
     state: State<'_, AppState>,
     args: RollbackArgs,
-) -> Result<(), String> {
+) -> Result<(), RecoveryError> {
     let pool_opt = state.pool.lock().expect("pool").clone();
-    let pool = pool_opt.ok_or_else(|| "No database open".to_string())?;
+    let pool = pool_opt.ok_or_else(|| RecoveryError::show_help("No database open"))?;
     crate::core::import::gnucash::committer::rollback(&pool, &args.import_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -888,18 +911,22 @@ pub struct ReconcileArgs {
 pub async fn reconcile_gnucash_import(
     state: State<'_, AppState>,
     args: ReconcileArgs,
-) -> Result<crate::core::import::gnucash::reconcile::BalanceReportArtifact, String> {
+) -> Result<crate::core::import::gnucash::reconcile::BalanceReportArtifact, RecoveryError> {
     use crate::core::import::gnucash::{reader, reconcile, AccountMapping, ImportPlan};
     use std::path::Path;
 
     let pool_opt = state.pool.lock().expect("pool").clone();
-    let pool = pool_opt.ok_or_else(|| "No database open".to_string())?;
-    let household_id = state.household_id.lock().expect("hh").clone()
-        .ok_or_else(|| "No household configured".to_string())?;
+    let pool = pool_opt.ok_or_else(|| RecoveryError::show_help("No database open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("hh")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("No household configured"))?;
 
     let book = reader::read(Path::new(&args.path))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     // Rebuild minimal AccountMapping set from accounts table (rows stamped with this import_id).
     // Query by gnc_guid directly — leaf-name matching is unsound for books with repeated
@@ -913,7 +940,7 @@ pub async fn reconcile_gnucash_import(
     .bind(&args.import_id)
     .fetch_all(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     let by_guid: std::collections::HashMap<&str, &crate::core::import::gnucash::GncAccount> =
         book.accounts.iter().map(|a| (a.guid.as_str(), a)).collect();
@@ -939,7 +966,24 @@ pub async fn reconcile_gnucash_import(
         transactions: vec![], // unused by reconcile
     };
 
+    // Reconcile mismatches: offer Discard so the user can roll back the import.
     reconcile::reconcile(&pool, &plan, &book)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            RecoveryError::new(
+                format!("Could not reconcile the GnuCash import: {e}"),
+                NonEmpty::new(
+                    RecoveryAction {
+                        kind: RecoveryKind::ShowHelp,
+                        label: "Get help".to_string(),
+                        is_primary: true,
+                    },
+                    vec![RecoveryAction {
+                        kind: RecoveryKind::Discard,
+                        label: "Discard import".to_string(),
+                        is_primary: false,
+                    }],
+                ),
+            )
+        })
 }
