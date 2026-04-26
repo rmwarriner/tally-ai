@@ -94,11 +94,17 @@ because they are awaited promise rejections, not render errors.
 ### T-060 — Rust validation behavior matrix
 
 - New file `src-tauri/src/core/validate/tests/matrix.rs`.
-- Tier 1 (`HardError`): all 6 rules × {pass, fail, edge} × asserts the
-  recovery action set against the spec.
-- Tier 2 (`SoftWarning`): all 5 rules × same shape.
-- Tier 3 (`AIAdvisory`): all 4 advisory types × triggering snapshot
-  fixture.
+- Tier 1 (`HardError`): all 8 current variants (`NoLines`,
+  `UnbalancedLines`, `ZeroAmount`, `NegativeAmount`, `UnknownAccount`,
+  `PlaceholderAccount`, `AbnormalBalance`, `EnvelopeMismatch`) ×
+  {pass, fail, edge} × asserts the recovery action set against the spec.
+  (Spec text at the time of writing said "6 rules"; reality is 8 — the
+  matrix covers all current variants.)
+- Tier 2 (`SoftWarning`): all 5 variants (`FutureDate`, `StaleDate`,
+  `LargeAmount`, `EnvelopeOverdraft`, `PossibleDuplicate`) × same shape.
+- Tier 3 (`AIAdvisory`): all 4 advisory builders (`unknown_payee`,
+  `suggested_account`, `possible_duplicate`, `envelope_near_limit`) ×
+  triggering snapshot fixture.
 - Existing scattered tests stay; `matrix.rs` is the canonical inventory.
 
 ### T-061 — React component behavior matrix
