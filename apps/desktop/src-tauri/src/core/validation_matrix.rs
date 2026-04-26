@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sqlx::SqlitePool;
 use tempfile::tempdir;
 
+use crate::ai::advisories;
 use crate::core::coa::seed_chart_of_accounts;
 use crate::core::envelope::create_envelope_with_current_period;
 use crate::core::proposal::{ProposedLine, Side, TransactionProposal};
@@ -205,7 +206,6 @@ fn recovery_kinds_of_soft(warn: &SoftWarning) -> Vec<RecoveryKind> {
     warn.actions.iter().map(|a| a.kind.clone()).collect()
 }
 
-#[allow(dead_code)] // used by Task 6 (Tier 3) tests
 fn recovery_kinds_of_advisory(adv: &AIAdvisory) -> Vec<RecoveryKind> {
     adv.actions.iter().map(|a| a.kind.clone()).collect()
 }
@@ -1102,5 +1102,133 @@ async fn tier2_possible_duplicate_edge_outside_window_passes() {
         !soft_codes(&result).contains(&SoftWarningCode::PossibleDuplicate),
         "match outside ±1-day window should not trigger PossibleDuplicate, got {:?}",
         soft_codes(&result),
+    );
+}
+
+// === Task 6: Tier 3 (AIAdvisory) matrix ===================================
+//
+// Tier 3 advisories are produced by builder functions in `ai/advisories.rs`,
+// NOT by the validator. Each builder is a pure function: given input, return
+// an `AIAdvisory` with `user_message` and `NonEmpty<RecoveryAction>`. The
+// matrix asserts (1) the user_message reflects the inputs and (2) the
+// recovery action set matches what the builder emits.
+//
+// Recovery action expectations are verified against `advisories.rs` itself —
+// *not* the design table — so the test reflects the actual builder output.
+//
+// Discoveries vs. the original task table for Tier 3:
+//   - `unknown_payee`: extras are `PostAnyway` + `Discard` (not
+//     `CreateMissing` + `Discard` as the table claimed). Primary `EditField`
+//     matches.
+//   - `suggested_account`: only one extra, `EditField`. No `Discard`. Primary
+//     `UseSuggested` matches.
+//   - `possible_duplicate`: matches the table — primary `PostAnyway`, extra
+//     `Discard`.
+//   - `envelope_near_limit`: extra is `ShowHelp` ("Review budget"), not
+//     `EditField` + `Discard` as the table claimed. Primary `PostAnyway`
+//     matches.
+
+#[test]
+fn tier3_unknown_payee_advisory_shape() {
+    let advisory = advisories::unknown_payee("Trader Joe's");
+    assert!(
+        advisory.user_message.contains("Trader Joe's"),
+        "user_message should reflect the payee name; got {:?}",
+        advisory.user_message,
+    );
+    let kinds = recovery_kinds_of_advisory(&advisory);
+    assert!(
+        first_kind_is(&kinds, RecoveryKind::EditField),
+        "primary kind: expected EditField, got {:?}",
+        kinds.first(),
+    );
+    // advisories.rs emits PostAnyway + Discard as extras (the original task
+    // table listed CreateMissing — the builder does not produce one).
+    assert!(
+        kinds_contain(&kinds, RecoveryKind::PostAnyway),
+        "unknown_payee should also offer PostAnyway, got {:?}",
+        kinds,
+    );
+    assert!(
+        kinds_contain(&kinds, RecoveryKind::Discard),
+        "unknown_payee should also offer Discard, got {:?}",
+        kinds,
+    );
+}
+
+#[test]
+fn tier3_suggested_account_advisory_shape() {
+    let advisory = advisories::suggested_account("Netflix", "Subscriptions");
+    assert!(
+        advisory.user_message.contains("Netflix"),
+        "user_message should reflect the payee name; got {:?}",
+        advisory.user_message,
+    );
+    assert!(
+        advisory.user_message.contains("Subscriptions"),
+        "user_message should reflect the account name; got {:?}",
+        advisory.user_message,
+    );
+    let kinds = recovery_kinds_of_advisory(&advisory);
+    assert!(
+        first_kind_is(&kinds, RecoveryKind::UseSuggested),
+        "primary kind: expected UseSuggested, got {:?}",
+        kinds.first(),
+    );
+    // advisories.rs only emits EditField as the extra (no Discard, contrary
+    // to the original task table).
+    assert!(
+        kinds_contain(&kinds, RecoveryKind::EditField),
+        "suggested_account should also offer EditField, got {:?}",
+        kinds,
+    );
+}
+
+#[test]
+fn tier3_possible_duplicate_advisory_shape() {
+    let advisory = advisories::possible_duplicate(3);
+    assert!(
+        advisory.user_message.contains("3 days ago"),
+        "user_message should reflect the days_ago argument; got {:?}",
+        advisory.user_message,
+    );
+    let kinds = recovery_kinds_of_advisory(&advisory);
+    assert!(
+        first_kind_is(&kinds, RecoveryKind::PostAnyway),
+        "primary kind: expected PostAnyway, got {:?}",
+        kinds.first(),
+    );
+    assert!(
+        kinds_contain(&kinds, RecoveryKind::Discard),
+        "possible_duplicate should also offer Discard, got {:?}",
+        kinds,
+    );
+}
+
+#[test]
+fn tier3_envelope_near_limit_advisory_shape() {
+    let advisory = advisories::envelope_near_limit("Groceries", 95);
+    assert!(
+        advisory.user_message.contains("Groceries"),
+        "user_message should reflect the envelope name; got {:?}",
+        advisory.user_message,
+    );
+    assert!(
+        advisory.user_message.contains("95%"),
+        "user_message should reflect the percent_used; got {:?}",
+        advisory.user_message,
+    );
+    let kinds = recovery_kinds_of_advisory(&advisory);
+    assert!(
+        first_kind_is(&kinds, RecoveryKind::PostAnyway),
+        "primary kind: expected PostAnyway, got {:?}",
+        kinds.first(),
+    );
+    // advisories.rs emits ShowHelp ("Review budget") as the only extra —
+    // the original task table listed EditField + Discard, both wrong.
+    assert!(
+        kinds_contain(&kinds, RecoveryKind::ShowHelp),
+        "envelope_near_limit should also offer ShowHelp, got {:?}",
+        kinds,
     );
 }
