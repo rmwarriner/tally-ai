@@ -12,10 +12,10 @@ interface Deps {
   dispatchAdvisory?: (err: RecoveryError) => void;
 }
 
-const DEFAULT_RECOVERY: [RecoveryAction, ...RecoveryAction[]] = [
+const DEFAULT_RECOVERY = [
   { kind: "SHOW_HELP", label: "Get help", is_primary: true },
   { kind: "DISCARD", label: "Discard", is_primary: false },
-];
+] as const satisfies readonly [RecoveryAction, ...RecoveryAction[]];
 
 function isRecoveryError(value: unknown): value is RecoveryError {
   if (typeof value !== "object" || value === null) return false;
@@ -32,9 +32,9 @@ function normalize(raw: unknown): RecoveryError {
     return raw;
   }
   if (typeof raw === "string") {
-    return { message: raw, recovery: DEFAULT_RECOVERY };
+    return { message: raw, recovery: [...DEFAULT_RECOVERY] };
   }
-  return { message: "Something went wrong.", recovery: DEFAULT_RECOVERY };
+  return { message: "Something went wrong.", recovery: [...DEFAULT_RECOVERY] };
 }
 
 export async function safeInvoke<T>(
@@ -64,10 +64,6 @@ export async function safeInvokeOrAdvise<T>(
 }
 
 function defaultDispatch(err: RecoveryError): void {
-  // Dispatched as a system advisory message via the chat store.
-  // Task 12 adds appendAdvisory; until then this is a no-op via optional chaining.
-  const store = useChatStore.getState() as unknown as {
-    appendAdvisory?: (err: RecoveryError) => void;
-  };
-  store.appendAdvisory?.(err);
+  // Task 12 adds the appendAdvisory implementation; until then this is a no-op.
+  useChatStore.getState().appendAdvisory?.(err);
 }

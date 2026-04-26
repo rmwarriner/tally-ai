@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 import type { ChatMessage } from "../components/chat/chatTypes";
 import type { SetupCardVariant } from "../components/onboarding/SetupCard";
-import type { ImportPlan } from "@tally/core-types";
+import type { ImportPlan, RecoveryError } from "@tally/core-types";
 import type { GnuCashReconcileReport } from "../components/artifacts/GnuCashReconcileCard";
 import { generateUlid } from "../utils/ulid";
 
@@ -23,6 +23,9 @@ interface ChatStore {
   addGnuCashReconcileMessage: (report: GnuCashReconcileReport) => void;
   updateMessage: (id: string, patch: Partial<ChatMessage>) => void;
   removeMessage: (id: string) => void;
+  // Task 12 will implement appendAdvisory; declared here so safeInvoke's
+  // defaultDispatch can call it via optional chaining without a cast.
+  appendAdvisory?: (err: RecoveryError) => void;
 }
 
 function makeBaseMessage<K extends ChatMessage["kind"]>(kind: K): { kind: K; id: string; ts: number } {
