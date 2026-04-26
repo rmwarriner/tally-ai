@@ -441,10 +441,10 @@ pub async fn get_ai_defaults(
 
 /// Reverses the most recently posted AI transaction. Stub for Phase 1.
 #[tauri::command]
-pub async fn undo_last_transaction(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn undo_last_transaction(state: State<'_, AppState>) -> Result<(), RecoveryError> {
     let guard = state.pool.lock().expect("pool lock");
     if guard.is_none() {
-        return Err("No database open".to_string());
+        return Err(RecoveryError::show_help("No database open"));
     }
     // TODO(phase2): implement full GAAP reversal via core::correction
     Ok(())
@@ -535,21 +535,40 @@ pub struct SubmitMessageArgs {
 pub async fn submit_message(
     state: State<'_, AppState>,
     args: SubmitMessageArgs,
-) -> Result<MessageResponse, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<MessageResponse, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     let api_key = load_claude_api_key(&KeyringStore::new())
-        .map_err(|e| e.to_string())?
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?
         .ok_or_else(|| {
-            "No Claude API key configured. Paste your key into chat when prompted, \
-             or set CLAUDE_API_KEY for development."
-                .to_string()
+            // Missing API key is recoverable by re-entering it.
+            RecoveryError::new(
+                "No Claude API key configured. Paste your key into chat when prompted, \
+                 or set CLAUDE_API_KEY for development.",
+                NonEmpty::new(
+                    RecoveryAction {
+                        kind: RecoveryKind::EditField,
+                        label: "Enter API key".to_string(),
+                        is_primary: true,
+                    },
+                    vec![RecoveryAction {
+                        kind: RecoveryKind::ShowHelp,
+                        label: "Get help".to_string(),
+                        is_primary: false,
+                    }],
+                ),
+            )
         })?;
 
     let adapter = Arc::new(ClaudeAdapter::new(api_key));
@@ -558,7 +577,7 @@ pub async fn submit_message(
     orchestrator
         .handle(&household_id, args.text.trim())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -581,23 +600,32 @@ pub enum CommitOutcome {
 pub async fn commit_proposal(
     state: State<'_, AppState>,
     args: CommitProposalArgs,
-) -> Result<CommitOutcome, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<CommitOutcome, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     match ledger_commit(&pool, &household_id, &args.proposal).await {
         Ok(txn_id) => Ok(CommitOutcome::Committed { txn_id }),
         Err(LedgerError::ValidationFailed(result)) => {
             Ok(CommitOutcome::Rejected { validation: result })
         }
-        Err(LedgerError::Database(e)) => Err(e.to_string()),
+        Err(LedgerError::Database(e)) => Err(RecoveryError::show_help(e.to_string())),
         Err(LedgerError::OpeningBalanceExists) => {
-            Err("Opening balance already exists for this account".to_string())
+            // The opening balance already exists; the user's recovery is to
+            // discard this attempt rather than overwrite it.
+            Err(RecoveryError::discard(
+                "Opening balance already exists for this account.",
+            ))
         }
     }
 }
