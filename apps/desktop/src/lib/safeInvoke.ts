@@ -64,6 +64,5 @@ export async function safeInvokeOrAdvise<T>(
 }
 
 function defaultDispatch(err: RecoveryError): void {
-  // Task 12 adds the appendAdvisory implementation; until then this is a no-op.
   useChatStore.getState().appendAdvisory?.(err);
 }
