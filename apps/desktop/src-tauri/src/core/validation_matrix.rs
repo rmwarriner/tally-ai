@@ -239,10 +239,10 @@ async fn matrix_baseline_validates_clean() {
 // (`hard_error(..., primary_action, vec![extras...])`) — *not* the design
 // table — so the test reflects what the validator actually emits.
 
-fn find_hard<'a>(
-    result: &'a ValidationResult,
+fn find_hard(
+    result: &ValidationResult,
     code: HardErrorCode,
-) -> Option<&'a HardError> {
+) -> Option<&HardError> {
     match result {
         ValidationResult::Rejected { errors, .. } => {
             errors.iter().find(|e| e.code == code)
@@ -251,31 +251,12 @@ fn find_hard<'a>(
     }
 }
 
-/// Recovery-kind comparison helpers. `RecoveryKind` is `Clone` but not
-/// `PartialEq`, so we discriminate via `matches!` to avoid widening the
-/// public surface.
 fn first_kind_is(kinds: &[RecoveryKind], expected: RecoveryKind) -> bool {
-    match (kinds.first(), expected) {
-        (Some(RecoveryKind::CreateMissing), RecoveryKind::CreateMissing) => true,
-        (Some(RecoveryKind::UseSuggested), RecoveryKind::UseSuggested) => true,
-        (Some(RecoveryKind::EditField), RecoveryKind::EditField) => true,
-        (Some(RecoveryKind::PostAnyway), RecoveryKind::PostAnyway) => true,
-        (Some(RecoveryKind::Discard), RecoveryKind::Discard) => true,
-        (Some(RecoveryKind::ShowHelp), RecoveryKind::ShowHelp) => true,
-        _ => false,
-    }
+    kinds.first() == Some(&expected)
 }
 
 fn kinds_contain(kinds: &[RecoveryKind], expected: RecoveryKind) -> bool {
-    kinds.iter().any(|k| match (k, &expected) {
-        (RecoveryKind::CreateMissing, RecoveryKind::CreateMissing) => true,
-        (RecoveryKind::UseSuggested, RecoveryKind::UseSuggested) => true,
-        (RecoveryKind::EditField, RecoveryKind::EditField) => true,
-        (RecoveryKind::PostAnyway, RecoveryKind::PostAnyway) => true,
-        (RecoveryKind::Discard, RecoveryKind::Discard) => true,
-        (RecoveryKind::ShowHelp, RecoveryKind::ShowHelp) => true,
-        _ => false,
-    })
+    kinds.contains(&expected)
 }
 
 // --- NoLines --------------------------------------------------------------
@@ -743,10 +724,10 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
-fn find_soft<'a>(
-    result: &'a ValidationResult,
+fn find_soft(
+    result: &ValidationResult,
     code: SoftWarningCode,
-) -> Option<&'a SoftWarning> {
+) -> Option<&SoftWarning> {
     match result {
         ValidationResult::Warnings { warnings, .. } => {
             warnings.iter().find(|w| w.code == code)
