@@ -27,6 +27,12 @@ export interface RecoveryAction {
   is_primary: boolean;
 }
 
+/** Mirrors Rust `RecoveryError` — wire shape for any `Result<T, RecoveryError>` from a Tauri command. */
+export interface RecoveryError {
+  message: string;
+  recovery: [RecoveryAction, ...RecoveryAction[]]; // NonEmpty
+}
+
 export interface HardError {
   code: string;
   message: string;
