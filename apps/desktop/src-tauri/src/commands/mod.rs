@@ -611,24 +611,42 @@ pub struct SetApiKeyArgs {
 
 /// Saves the Claude API key to the OS keychain.
 #[tauri::command]
-pub async fn set_api_key(args: SetApiKeyArgs) -> Result<(), String> {
+pub async fn set_api_key(args: SetApiKeyArgs) -> Result<(), RecoveryError> {
     let trimmed = args.key.trim();
     if trimmed.is_empty() {
-        return Err("API key cannot be empty".to_string());
+        // Empty input is recoverable by retyping the key.
+        return Err(RecoveryError::new(
+            "API key cannot be empty.",
+            NonEmpty::new(
+                RecoveryAction {
+                    kind: RecoveryKind::EditField,
+                    label: "Re-enter key".to_string(),
+                    is_primary: true,
+                },
+                vec![RecoveryAction {
+                    kind: RecoveryKind::Discard,
+                    label: "Discard".to_string(),
+                    is_primary: false,
+                }],
+            ),
+        ));
     }
-    save_claude_api_key(&KeyringStore::new(), trimmed).map_err(|e| e.to_string())
+    save_claude_api_key(&KeyringStore::new(), trimmed)
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 /// Returns true if an API key is configured (env var or keychain).
 #[tauri::command]
-pub async fn has_api_key() -> Result<bool, String> {
-    has_claude_api_key(&KeyringStore::new()).map_err(|e| e.to_string())
+pub async fn has_api_key() -> Result<bool, RecoveryError> {
+    has_claude_api_key(&KeyringStore::new())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 /// Removes the Claude API key from the keychain. Env var (if set) is untouched.
 #[tauri::command]
-pub async fn delete_api_key() -> Result<(), String> {
-    delete_claude_api_key(&KeyringStore::new()).map_err(|e| e.to_string())
+pub async fn delete_api_key() -> Result<(), RecoveryError> {
+    delete_claude_api_key(&KeyringStore::new())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 // ── Deterministic salt generation (simple, uses OS random) ────────────────────
