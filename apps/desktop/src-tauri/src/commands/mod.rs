@@ -18,6 +18,7 @@ use crate::core::ledger::{commit_proposal as ledger_commit, LedgerError};
 use crate::core::proposal::TransactionProposal;
 use crate::core::validation::ValidationResult;
 use crate::db::create_encrypted_db;
+use crate::error::{NonEmpty, RecoveryAction, RecoveryError, RecoveryKind};
 use crate::id::new_ulid;
 use crate::secrets::{
     delete_claude_api_key, has_claude_api_key, load_claude_api_key, save_claude_api_key,
@@ -115,17 +116,36 @@ pub async fn create_household(
     app: AppHandle,
     state: State<'_, AppState>,
     args: CreateHouseholdArgs,
-) -> Result<String, String> {
-    let path = db_path(&app)?;
-    let sp = salt_path(&app)?;
+) -> Result<String, RecoveryError> {
+    let path = db_path(&app).map_err(RecoveryError::show_help)?;
+    let sp = salt_path(&app).map_err(RecoveryError::show_help)?;
 
     // Generate a fresh random 16-byte salt
     let salt: [u8; 16] = rand_salt();
-    std::fs::write(&sp, salt).map_err(|e| format!("Cannot write salt: {e}"))?;
+    std::fs::write(&sp, salt)
+        .map_err(|e| RecoveryError::show_help(format!("Cannot write salt: {e}")))?;
 
     let pool = create_encrypted_db(&path, &args.passphrase, &salt)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            // Wrong passphrase / DB-open failure is recoverable by retyping the
+            // passphrase, so surface EditField as the primary action.
+            RecoveryError::new(
+                format!("Could not open the database: {e}"),
+                NonEmpty::new(
+                    RecoveryAction {
+                        kind: RecoveryKind::EditField,
+                        label: "Re-enter passphrase".to_string(),
+                        is_primary: true,
+                    },
+                    vec![RecoveryAction {
+                        kind: RecoveryKind::Discard,
+                        label: "Discard".to_string(),
+                        is_primary: false,
+                    }],
+                ),
+            )
+        })?;
 
     let household_id = new_ulid();
     let ts = now_ms();
@@ -140,7 +160,7 @@ pub async fn create_household(
     .bind(ts)
     .execute(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     // Seed owner user
     let user_id = new_ulid();
@@ -154,12 +174,12 @@ pub async fn create_household(
     .bind(ts)
     .execute(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     // Seed chart of accounts
     seed_chart_of_accounts(&pool, &household_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     // Store pool and household id in state
     *state.pool.lock().expect("pool lock") = Some(pool);
@@ -180,9 +200,19 @@ pub struct CreateAccountArgs {
 pub async fn create_account(
     state: State<'_, AppState>,
     args: CreateAccountArgs,
-) -> Result<String, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
-    let household_id = state.household_id.lock().expect("household_id lock").clone().ok_or("Household not set")?;
+) -> Result<String, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     let normal_balance = match args.account_type.as_str() {
         "asset" | "expense" => "debit",
@@ -197,7 +227,7 @@ pub async fn create_account(
     .bind(&args.account_type)
     .fetch_optional(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     let account_id = new_ulid();
     let ts = now_ms();
@@ -215,7 +245,7 @@ pub async fn create_account(
     .bind(ts)
     .execute(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     Ok(account_id)
 }
@@ -231,9 +261,19 @@ pub struct SetOpeningBalanceArgs {
 pub async fn set_opening_balance(
     state: State<'_, AppState>,
     args: SetOpeningBalanceArgs,
-) -> Result<(), String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
-    let household_id = state.household_id.lock().expect("household_id lock").clone().ok_or("Household not set")?;
+) -> Result<(), RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     if args.amount_cents == 0 {
         return Ok(());
@@ -246,9 +286,11 @@ pub async fn set_opening_balance(
     .bind(&household_id)
     .fetch_optional(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
-    let obe_id = obe.map(|(id,)| id).ok_or("Opening Balance Equity account not found")?;
+    let obe_id = obe
+        .map(|(id,)| id)
+        .ok_or_else(|| RecoveryError::show_help("Opening Balance Equity account not found"))?;
 
     // Get account type to determine debit/credit side
     let account_type: (String,) =
@@ -256,7 +298,7 @@ pub async fn set_opening_balance(
             .bind(&args.account_id)
             .fetch_one(&pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     let (primary_side, equity_side) = match account_type.0.as_str() {
         "asset" => ("debit", "credit"),
@@ -280,7 +322,7 @@ pub async fn set_opening_balance(
     .bind(ts)
     .execute(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     sqlx::query(
         "INSERT INTO journal_lines (id, transaction_id, account_id, amount, side, created_at)
@@ -294,7 +336,7 @@ pub async fn set_opening_balance(
     .bind(ts)
     .execute(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     sqlx::query(
         "INSERT INTO journal_lines (id, transaction_id, account_id, amount, side, created_at)
@@ -308,7 +350,7 @@ pub async fn set_opening_balance(
     .bind(ts)
     .execute(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     Ok(())
 }
@@ -324,14 +366,19 @@ pub struct CreateEnvelopeArgs {
 pub async fn create_envelope(
     state: State<'_, AppState>,
     args: CreateEnvelopeArgs,
-) -> Result<String, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<String, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     crate::core::envelope::create_envelope_with_current_period(
         &pool,
@@ -340,6 +387,7 @@ pub async fn create_envelope(
         now_ms(),
     )
     .await
+    .map_err(RecoveryError::show_help)
 }
 
 #[derive(Deserialize)]
