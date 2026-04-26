@@ -23,8 +23,10 @@ interface ChatStore {
   addGnuCashReconcileMessage: (report: GnuCashReconcileReport) => void;
   updateMessage: (id: string, patch: Partial<ChatMessage>) => void;
   removeMessage: (id: string) => void;
-  // Task 12 will implement appendAdvisory; declared here so safeInvoke's
-  // defaultDispatch can call it via optional chaining without a cast.
+  // Task 12: convert a RecoveryError into a proactive-advisory chat message
+  // and append it. Kept optional on the interface so existing call sites
+  // (e.g. safeInvoke's defaultDispatch) keep type-checking via optional
+  // chaining; the implementation below always supplies it.
   appendAdvisory?: (err: RecoveryError) => void;
 }
 
@@ -110,5 +112,13 @@ export const useChatStore = create<ChatStore>((set) => ({
     set((state) => ({
       localMessages: state.localMessages.filter((m) => m.id !== id),
     }));
+  },
+  appendAdvisory: (err) => {
+    const message: ChatMessage = {
+      ...makeBaseMessage("proactive"),
+      text: err.message,
+      recovery: [...err.recovery],
+    };
+    set((state) => ({ localMessages: [...state.localMessages, message] }));
   },
 }));

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { RecoveryError } from "@tally/core-types";
 
 import { useChatStore } from "./chatStore";
 
@@ -43,5 +44,76 @@ describe("useChatStore", () => {
       title: "Commands",
       content: "/help",
     });
+  });
+});
+
+describe("appendAdvisory", () => {
+  beforeEach(() => {
+    useChatStore.setState({ localMessages: [] });
+  });
+
+  it("appends a proactive chat message reflecting the RecoveryError", () => {
+    const err: RecoveryError = {
+      message: "Boom",
+      recovery: [{ kind: "SHOW_HELP", label: "Get help", is_primary: true }],
+    };
+
+    useChatStore.getState().appendAdvisory!(err);
+
+    const messages = useChatStore.getState().localMessages;
+    expect(messages).toHaveLength(1);
+    const last = messages[messages.length - 1]!;
+    expect(last.kind).toBe("proactive");
+    if (last.kind === "proactive") {
+      expect(last.text).toBe("Boom");
+      expect(last.recovery).toEqual([
+        { kind: "SHOW_HELP", label: "Get help", is_primary: true },
+      ]);
+      expect(typeof last.id).toBe("string");
+      expect(typeof last.ts).toBe("number");
+    }
+  });
+
+  it("preserves every recovery action on the appended message", () => {
+    const err: RecoveryError = {
+      message: "Bang",
+      recovery: [
+        { kind: "EDIT_FIELD", label: "Edit", is_primary: true },
+        { kind: "DISCARD", label: "Discard", is_primary: false },
+      ],
+    };
+
+    useChatStore.getState().appendAdvisory!(err);
+
+    const messages = useChatStore.getState().localMessages;
+    const last = messages[messages.length - 1]!;
+    expect(last.kind).toBe("proactive");
+    if (last.kind === "proactive") {
+      expect(last.recovery).toHaveLength(2);
+      const kinds = last.recovery?.map((a) => a.kind);
+      expect(kinds).toEqual(["EDIT_FIELD", "DISCARD"]);
+      const primary = last.recovery?.find((a) => a.is_primary);
+      expect(primary?.kind).toBe("EDIT_FIELD");
+    }
+  });
+
+  it("snapshots recovery so later mutation of the input does not bleed in", () => {
+    const recovery = [
+      { kind: "SHOW_HELP" as const, label: "Help", is_primary: true },
+    ];
+    const err: RecoveryError = {
+      message: "Snapshot",
+      recovery: [recovery[0]!],
+    };
+
+    useChatStore.getState().appendAdvisory!(err);
+    // Mutate the original after the call.
+    err.recovery.push({ kind: "DISCARD", label: "Discard", is_primary: false });
+
+    const last = useChatStore.getState().localMessages.at(-1)!;
+    expect(last.kind).toBe("proactive");
+    if (last.kind === "proactive") {
+      expect(last.recovery).toHaveLength(1);
+    }
   });
 });

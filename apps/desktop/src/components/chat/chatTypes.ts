@@ -4,7 +4,7 @@ import type {
 } from "./TransactionCard.types";
 
 import type { SetupCardVariant } from "../onboarding/SetupCard";
-import type { ImportPlan } from "@tally/core-types";
+import type { ImportPlan, RecoveryAction } from "@tally/core-types";
 import type { GnuCashReconcileReport } from "../artifacts/GnuCashReconcileCard";
 
 export interface ProposedLine {
@@ -23,7 +23,16 @@ export interface TransactionProposal {
 export type ChatMessage =
   | { kind: "user"; id: string; ts: number; text: string }
   | { kind: "ai"; id: string; ts: number; text: string; model?: string }
-  | { kind: "proactive"; id: string; ts: number; text: string; advisory_code?: string }
+  | {
+      kind: "proactive";
+      id: string;
+      ts: number;
+      text: string;
+      advisory_code?: string;
+      /// Optional recovery actions surfaced when this proactive message
+      /// originated from a `RecoveryError` (e.g. via `appendAdvisory`).
+      recovery?: RecoveryAction[];
+    }
   | { kind: "system"; id: string; ts: number; text: string; tone?: "info" | "error" }
   | {
       kind: "transaction";

@@ -117,6 +117,7 @@ function renderMessage(message: ChatMessage, opts: RenderOptions) {
           text={message.text}
           ts={message.ts}
           advisory_code={message.advisory_code}
+          recovery={message.recovery}
         />
       );
     case "system":
