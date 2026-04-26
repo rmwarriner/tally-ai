@@ -6,8 +6,6 @@
 //! recovery action set against the spec, not just the error variant.
 
 #![cfg(test)]
-#![allow(dead_code)]
-#![allow(unused_imports)]
 
 use sqlx::SqlitePool;
 
