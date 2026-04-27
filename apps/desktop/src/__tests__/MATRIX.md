@@ -27,8 +27,9 @@ and update the corresponding test file (or create one). Same discipline as
 
 - Renders all message kinds in the `ChatMessage` union: `user`, `ai`,
   `proactive`, `system`, `transaction`, `artifact`, `setup_card`, `handoff`,
-  `gnucash_mapping`, `gnucash_reconcile`. (Per-kind rendering coverage lives
-  in `MessageList.test.tsx`; ChatThread asserts the union flows through.)
+  `gnucash_mapping`, `gnucash_reconcile`. (The union-render test in
+  `ChatThread.test.tsx` exercises all 10 kinds end-to-end; deeper per-card
+  rendering details live in each card's own test file.)
 - Date separators appear between messages on different local-day boundaries.
 - Auto-scrolls to the bottom when a new message arrives and the user is near
   the bottom.

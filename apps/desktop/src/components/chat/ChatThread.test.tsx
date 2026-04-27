@@ -72,7 +72,7 @@ describe("ChatThread", () => {
     expect(fetchNextPage).toHaveBeenCalled();
   });
 
-  it("shows new message pill when user is scrolled up and new message arrives", () => {
+  it("shows new message pill when user is scrolled up and new message arrives", async () => {
     const now = Date.now();
 
     mockUseChatHistory.mockReturnValue({
@@ -85,7 +85,7 @@ describe("ChatThread", () => {
       fetchNextPage: vi.fn(),
     } as unknown as ReturnType<typeof useChatHistory>);
 
-    const { rerender } = render(<ChatThread />);
+    const { rerender, container } = render(<ChatThread />);
     const thread = screen.getByRole("log", { name: /chat thread/i });
 
     Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1000 });
@@ -106,6 +106,7 @@ describe("ChatThread", () => {
     rerender(<ChatThread />);
 
     expect(screen.getByRole("button", { name: /new message/i })).toBeInTheDocument();
+    expectNoA11yViolations(await checkA11y(container));
   });
 
   it("auto-scrolls when a new message arrives and user is near bottom", () => {
@@ -292,6 +293,33 @@ describe("ChatThread", () => {
         envelopeCount: 3,
         starterPrompts: ["StarterPrompt"],
       },
+      {
+        kind: "gnucash_mapping",
+        id: "gm1",
+        ts: now,
+        plan: {
+          household_id: "hh1",
+          import_id: "imp1",
+          account_mappings: [
+            {
+              gnc_guid: "g1",
+              gnc_full_name: "Assets:Checking",
+              tally_account_id: "acc1",
+              tally_name: "Checking",
+              tally_parent_id: null,
+              tally_type: "asset",
+              tally_normal_balance: "debit",
+            },
+          ],
+          transactions: [],
+        },
+      },
+      {
+        kind: "gnucash_reconcile",
+        id: "gr1",
+        ts: now,
+        report: { rows: [], total_mismatches: 0 },
+      },
     ];
 
     mockUseChatHistory.mockReturnValue({
@@ -312,6 +340,10 @@ describe("ChatThread", () => {
     expect(screen.getByText("HouseholdSetup")).toBeInTheDocument();
     expect(screen.getByText(/SmithHousehold/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /StarterPrompt/i })).toBeInTheDocument();
+    // gnucash_mapping renders the GnuCashMappingCard
+    expect(screen.getByText(/Assets:Checking/)).toBeInTheDocument();
+    // gnucash_reconcile renders the GnuCashReconcileCard (zero-mismatch report)
+    expect(screen.getByText(/all balances match gnucash/i)).toBeInTheDocument();
   });
 
   it("passes axe with messages rendered", async () => {
