@@ -610,8 +610,6 @@ export function useOnboardingEngine() {
 
   useEffect(() => {
     void handler.checkAndStart();
-    // Run only once on mount — handler identity is stable via useMemo
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return {

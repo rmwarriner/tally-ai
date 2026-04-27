@@ -11,7 +11,6 @@
 
 import tsParser from "@typescript-eslint/parser";
 import tsPlugin from "@typescript-eslint/eslint-plugin";
-import reactHooks from "eslint-plugin-react-hooks";
 
 export default [
   {
@@ -40,14 +39,8 @@ export default [
     },
     plugins: {
       "@typescript-eslint": tsPlugin,
-      "react-hooks": reactHooks,
     },
     rules: {
-      // The hook is only registered so that pre-existing
-      // `// eslint-disable-next-line react-hooks/exhaustive-deps` directives
-      // in the codebase don't surface as "unused disable" warnings. We don't
-      // want to expand lint scope beyond Task 14 here.
-      "react-hooks/exhaustive-deps": "off",
       "@typescript-eslint/no-restricted-imports": [
         "error",
         {
