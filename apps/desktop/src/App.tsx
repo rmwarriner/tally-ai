@@ -1,5 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 
 import { ChatThread } from "./components/chat/ChatThread";
 import { InputBar } from "./components/input/InputBar";
@@ -12,7 +11,6 @@ import { useUIStore } from "./stores/uiStore";
 import styles from "./App.module.css";
 
 export default function App() {
-  const [queryClient] = useState(() => new QueryClient());
   const sidebarState = useUIStore((state) => state.sidebarState);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
   const sendMessage = useSendMessage();
@@ -50,20 +48,18 @@ export default function App() {
   }, [toggleSidebar]);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <div id="app-shell" className={styles.shell}>
-        <HealthSidebar state={sidebarState} onToggle={toggleSidebar} />
-        <main className={styles.main}>
-          <ChatThread
-            onPromptClick={onSend}
-            onSubmitGnuCashPath={onboarding.handleFilePicked}
-            onConfirmMapping={onboarding.handleConfirmMapping}
-            onAcceptReconcile={onboarding.handleAcceptReconcile}
-            onRollbackReconcile={onboarding.handleRollbackReconcile}
-          />
-          <InputBar onSend={onSend} isStreaming={false} />
-        </main>
-      </div>
-    </QueryClientProvider>
+    <div id="app-shell" className={styles.shell}>
+      <HealthSidebar state={sidebarState} onToggle={toggleSidebar} />
+      <main className={styles.main}>
+        <ChatThread
+          onPromptClick={onSend}
+          onSubmitGnuCashPath={onboarding.handleFilePicked}
+          onConfirmMapping={onboarding.handleConfirmMapping}
+          onAcceptReconcile={onboarding.handleAcceptReconcile}
+          onRollbackReconcile={onboarding.handleRollbackReconcile}
+        />
+        <InputBar onSend={onSend} isStreaming={false} />
+      </main>
+    </div>
   );
 }
