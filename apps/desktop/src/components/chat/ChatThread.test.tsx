@@ -1,11 +1,21 @@
 import "@testing-library/jest-dom/vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { checkA11y, expectNoA11yViolations } from "../../test/axe";
 import { ChatThread } from "./ChatThread";
 import type { ChatMessage } from "./chatTypes";
 import { useChatHistory } from "../../hooks/useChatHistory";
 import { useChatStore } from "../../stores/chatStore";
+
+function makeWrapper() {
+  const queryClient = new QueryClient();
+  return ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+}
 
 vi.mock("../../hooks/useChatHistory", () => ({
   useChatHistory: vi.fn(),
@@ -217,6 +227,122 @@ describe("ChatThread", () => {
     fireEvent.scroll(thread);
 
     expect(screen.queryByRole("button", { name: /new message/i })).not.toBeInTheDocument();
+  });
+
+  it("renders a date separator between messages from different local days", () => {
+    const today = new Date("2026-04-23T12:00:00.000Z").getTime();
+    const yesterday = today - 86_400_000;
+
+    mockUseChatHistory.mockReturnValue({
+      data: {
+        pages: [[
+          makeMessage("1", yesterday, "Old"),
+          makeMessage("2", today, "New"),
+        ]],
+        pageParams: [undefined],
+      },
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+    } as unknown as ReturnType<typeof useChatHistory>);
+
+    render(<ChatThread />);
+
+    // Two unique date keys -> two separators.
+    expect(screen.getAllByRole("separator").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("renders messages of every kind in the union without crashing", () => {
+    const now = Date.now();
+    const messages: ChatMessage[] = [
+      { kind: "user", id: "u1", ts: now, text: "User msg" },
+      { kind: "ai", id: "a1", ts: now, text: "AI msg" },
+      { kind: "proactive", id: "p1", ts: now, text: "Proactive msg" },
+      { kind: "system", id: "s1", ts: now, text: "System msg", tone: "info" },
+      {
+        kind: "transaction",
+        id: "t1",
+        ts: now,
+        transaction_id: "txn_1",
+        state: "posted",
+        transaction: {
+          id: "txn_1",
+          payee: "Trader Joe's",
+          txn_date: now,
+          amount_cents: 4299,
+          account_name: "Checking",
+          lines: [],
+        },
+      },
+      { kind: "artifact", id: "ar1", ts: now, artifact_id: "art_1", title: "ArtifactTitle" },
+      {
+        kind: "setup_card",
+        id: "sc1",
+        ts: now,
+        variant: "household_created",
+        title: "HouseholdSetup",
+        detail: "Created",
+      },
+      {
+        kind: "handoff",
+        id: "h1",
+        ts: now,
+        householdName: "SmithHousehold",
+        accountCount: 2,
+        envelopeCount: 3,
+        starterPrompts: ["StarterPrompt"],
+      },
+    ];
+
+    mockUseChatHistory.mockReturnValue({
+      data: { pages: [messages], pageParams: [undefined] },
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+    } as unknown as ReturnType<typeof useChatHistory>);
+
+    render(<ChatThread />, { wrapper: makeWrapper() });
+
+    expect(screen.getByText("User msg")).toBeInTheDocument();
+    expect(screen.getByText("AI msg")).toBeInTheDocument();
+    expect(screen.getByText("Proactive msg")).toBeInTheDocument();
+    expect(screen.getByText("System msg")).toBeInTheDocument();
+    expect(screen.getByText("Trader Joe's")).toBeInTheDocument();
+    expect(screen.getByText("ArtifactTitle")).toBeInTheDocument();
+    expect(screen.getByText("HouseholdSetup")).toBeInTheDocument();
+    expect(screen.getByText(/SmithHousehold/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /StarterPrompt/i })).toBeInTheDocument();
+  });
+
+  it("passes axe with messages rendered", async () => {
+    const now = Date.now();
+    mockUseChatHistory.mockReturnValue({
+      data: {
+        pages: [[
+          makeMessage("1", now, "Hello"),
+          { kind: "ai", id: "2", ts: now, text: "Hi" } as ChatMessage,
+        ]],
+        pageParams: [undefined],
+      },
+      hasNextPage: true,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+    } as unknown as ReturnType<typeof useChatHistory>);
+
+    const { container } = render(<ChatThread />);
+    expectNoA11yViolations(await checkA11y(container));
+  });
+
+  it("passes axe with empty placeholder", async () => {
+    mockUseChatHistory.mockReturnValue({
+      data: { pages: [[]], pageParams: [undefined] },
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+    } as unknown as ReturnType<typeof useChatHistory>);
+
+    const { container } = render(<ChatThread />);
+    expectNoA11yViolations(await checkA11y(container));
   });
 
   it("preserves scroll position after loading earlier messages", () => {
