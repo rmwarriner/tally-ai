@@ -1,4 +1,4 @@
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import type { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { useCallback } from "react";
 
 import type { TransactionProposal } from "../components/chat/chatTypes";
@@ -6,6 +6,7 @@ import type {
   JournalLineDisplay,
   TransactionDisplay,
 } from "../components/chat/TransactionCard.types";
+import { safeInvokeOrAdvise } from "../lib/safeInvoke";
 import { useChatStore } from "../stores/chatStore";
 import { generateUlid } from "../utils/ulid";
 
@@ -20,28 +21,23 @@ type MessageResponse =
     };
 
 export interface SendMessageDeps {
-  invoke: typeof tauriInvoke;
+  invoke?: typeof tauriInvoke;
 }
 
-export function useSendMessage(deps: SendMessageDeps = { invoke: tauriInvoke }) {
+export function useSendMessage(deps: SendMessageDeps = {}) {
   const addUserMessage = useChatStore((state) => state.addUserMessage);
   const addLocalMessage = useChatStore((state) => state.addLocalMessage);
-  const addSystemMessage = useChatStore((state) => state.addSystemMessage);
 
   return useCallback(
     async (text: string) => {
       addUserMessage(text);
 
-      let response: MessageResponse;
-      try {
-        response = await deps.invoke<MessageResponse>("submit_message", {
-          args: { text },
-        });
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        addSystemMessage(detail, "error");
-        return;
-      }
+      const response = await safeInvokeOrAdvise<MessageResponse>(
+        "submit_message",
+        { args: { text } },
+        { invoke: deps.invoke },
+      );
+      if (response === null) return; // advisory already dispatched
 
       if (response.kind === "text") {
         addLocalMessage({
@@ -64,7 +60,7 @@ export function useSendMessage(deps: SendMessageDeps = { invoke: tauriInvoke }) 
         proposal: response.proposal,
       });
     },
-    [addUserMessage, addLocalMessage, addSystemMessage, deps],
+    [addUserMessage, addLocalMessage, deps],
   );
 }
 

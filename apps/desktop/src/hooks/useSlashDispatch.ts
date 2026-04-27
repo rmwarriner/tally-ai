@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback } from "react";
 
+import { safeInvoke } from "../lib/safeInvoke";
 import { useChatStore } from "../stores/chatStore";
 import { useSendMessage } from "./useSendMessage";
 
@@ -115,8 +115,15 @@ export function useSlashDispatch() {
         sendMessage,
         addSystemMessage,
         addArtifactMessage,
-        undoLastTransaction: () => invoke("undo_last_transaction"),
-        getAIDefaults: () => invoke<Record<string, unknown>>("get_ai_defaults"),
+        undoLastTransaction: async () => {
+          const r = await safeInvoke<void>("undo_last_transaction");
+          if (!r.ok) throw r.error;
+        },
+        getAIDefaults: async () => {
+          const r = await safeInvoke<Record<string, unknown>>("get_ai_defaults");
+          if (!r.ok) throw r.error;
+          return r.value;
+        },
       });
     },
     [addArtifactMessage, addSystemMessage, sendMessage],

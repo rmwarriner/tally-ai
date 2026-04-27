@@ -1,7 +1,8 @@
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import type { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { useCallback } from "react";
 
 import type { TransactionProposal } from "../components/chat/chatTypes";
+import { safeInvoke } from "../lib/safeInvoke";
 import { useChatStore } from "../stores/chatStore";
 import { useInvalidateSidebar } from "./useInvalidateSidebar";
 
@@ -10,15 +11,13 @@ type CommitOutcome =
   | { status: "rejected"; validation: unknown };
 
 export interface CommitProposalDeps {
-  invoke: typeof tauriInvoke;
+  invoke?: typeof tauriInvoke;
 }
 
 /// Returns `{ commit, discard }`. `commit(messageId, proposal)` posts the
 /// transaction and flips the card to `posted` state on success; `discard`
 /// removes the pending card entirely.
-export function useCommitProposal(
-  deps: CommitProposalDeps = { invoke: tauriInvoke },
-) {
+export function useCommitProposal(deps: CommitProposalDeps = {}) {
   const updateMessage = useChatStore((s) => s.updateMessage);
   const removeMessage = useChatStore((s) => s.removeMessage);
   const addSystemMessage = useChatStore((s) => s.addSystemMessage);
@@ -28,17 +27,18 @@ export function useCommitProposal(
     async (messageId: string, proposal: TransactionProposal) => {
       updateMessage(messageId, { commit_error: undefined });
 
-      let outcome: CommitOutcome;
-      try {
-        outcome = await deps.invoke<CommitOutcome>("commit_proposal", {
-          args: { proposal },
-        });
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
+      const r = await safeInvoke<CommitOutcome>(
+        "commit_proposal",
+        { args: { proposal } },
+        { invoke: deps.invoke },
+      );
+      if (!r.ok) {
+        const detail = r.error.message;
         updateMessage(messageId, { commit_error: detail });
         addSystemMessage(`Couldn't save that transaction: ${detail}`, "error");
         return;
       }
+      const outcome = r.value;
 
       if (outcome.status === "committed") {
         updateMessage(messageId, {

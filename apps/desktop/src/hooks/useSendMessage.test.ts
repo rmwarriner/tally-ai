@@ -70,9 +70,13 @@ describe("useSendMessage", () => {
     });
   });
 
-  it("surfaces invoke errors as system messages", async () => {
+  it("surfaces invoke errors as proactive advisory messages", async () => {
     const invoke = vi.fn(async () => {
-      throw new Error("No Claude API key configured.");
+      // Tauri commands now reject with a serialized RecoveryError shape.
+      throw {
+        message: "No Claude API key configured.",
+        recovery: [{ kind: "SHOW_HELP", label: "Get help", is_primary: true }],
+      };
     });
 
     const { result } = renderHook(() => useSendMessage({ invoke: invoke as never }));
@@ -85,9 +89,8 @@ describe("useSendMessage", () => {
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({ kind: "user" });
     expect(messages[1]).toMatchObject({
-      kind: "system",
+      kind: "proactive",
       text: expect.stringContaining("API key"),
-      tone: "error",
     });
   });
 });

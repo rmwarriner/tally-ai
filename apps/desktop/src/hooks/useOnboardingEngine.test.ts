@@ -407,7 +407,11 @@ describe("fresh start — api_key step", () => {
   });
 
   it("surfaces an error when set_api_key fails and stays on the step", async () => {
-    mockInvoke.mockRejectedValue(new Error("kaboom"));
+    // Tauri commands now reject with a RecoveryError-shaped value.
+    mockInvoke.mockRejectedValue({
+      message: "kaboom",
+      recovery: [{ kind: "SHOW_HELP", label: "Get help", is_primary: true }],
+    });
     const addSystemMessage = vi.fn();
     const addHandoffMessage = vi.fn();
     const handler = buildOnboardingHandler(

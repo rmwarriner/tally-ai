@@ -125,7 +125,7 @@ describe("useSlashDispatch", () => {
       await result.current("/undo");
     });
 
-    expect(invoke).toHaveBeenCalledWith("undo_last_transaction");
+    expect(invoke).toHaveBeenCalledWith("undo_last_transaction", undefined);
     const message = useChatStore.getState().localMessages[0];
     expect(message).toMatchObject({ kind: "system", text: "Last transaction undone." });
   });
@@ -138,7 +138,7 @@ describe("useSlashDispatch", () => {
       await result.current("/defaults");
     });
 
-    expect(invoke).toHaveBeenCalledWith("get_ai_defaults");
+    expect(invoke).toHaveBeenCalledWith("get_ai_defaults", undefined);
     const artifact = useChatStore.getState().localMessages[0];
     expect(artifact).toMatchObject({
       kind: "artifact",

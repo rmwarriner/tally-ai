@@ -1,4 +1,4 @@
-// eslint-disable-next-line no-restricted-imports
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- this is the only file allowed to import `invoke` directly
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import type { RecoveryError, RecoveryAction } from "@tally/core-types";
 import { useChatStore } from "../stores/chatStore";
