@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, expectTypeOf } from "vitest";
 import type {
   Ulid,
   UnixMs,
@@ -10,6 +10,7 @@ import type {
   AuditAction,
   RecoveryKind,
   RecoveryAction,
+  RecoveryError,
   HardError,
   SoftWarning,
   AIAdvisory,
@@ -315,5 +316,20 @@ describe("ValidationResult shape", () => {
       advisories: [],
     };
     expect(result.hard_errors).toHaveLength(1);
+  });
+});
+
+describe("RecoveryError", () => {
+  it("has message and non-empty recovery tuple", () => {
+    const err: RecoveryError = {
+      message: "x",
+      recovery: [{ kind: "SHOW_HELP", label: "Help", is_primary: true }],
+    };
+    expectTypeOf(err.recovery).toMatchTypeOf<[RecoveryAction, ...RecoveryAction[]]>();
+  });
+
+  it("recovery tuple cannot be empty (compile-time)", () => {
+    // @ts-expect-error - empty array not assignable to non-empty tuple
+    const _bad: RecoveryError = { message: "x", recovery: [] };
   });
 });

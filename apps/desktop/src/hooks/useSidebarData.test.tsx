@@ -47,7 +47,7 @@ describe("useSidebarData", () => {
       expect(result.current.isSuccess).toBe(true);
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("get_account_balances");
+    expect(mockInvoke).toHaveBeenCalledWith("get_account_balances", undefined);
   });
 
   it("fetches envelope statuses", async () => {
@@ -61,7 +61,7 @@ describe("useSidebarData", () => {
       expect(result.current.isSuccess).toBe(true);
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("get_current_envelope_periods");
+    expect(mockInvoke).toHaveBeenCalledWith("get_current_envelope_periods", undefined);
   });
 
   it("fetches pending transactions", async () => {
@@ -75,6 +75,6 @@ describe("useSidebarData", () => {
       expect(result.current.isSuccess).toBe(true);
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("get_pending_transactions");
+    expect(mockInvoke).toHaveBeenCalledWith("get_pending_transactions", undefined);
   });
 });

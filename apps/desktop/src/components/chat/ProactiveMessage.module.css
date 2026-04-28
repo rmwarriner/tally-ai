@@ -25,3 +25,28 @@
   color: var(--color-muted, #6b7280);
   font-size: 11px;
 }
+
+.recoveryList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recoveryItem,
+.recoveryPrimary {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  background: var(--color-surface-2, rgba(0, 0, 0, 0.06));
+  color: var(--color-text, #111827);
+}
+
+.recoveryPrimary {
+  background: var(--color-caution, #d4860a);
+  color: white;
+}

@@ -18,6 +18,7 @@ use crate::core::ledger::{commit_proposal as ledger_commit, LedgerError};
 use crate::core::proposal::TransactionProposal;
 use crate::core::validation::ValidationResult;
 use crate::db::create_encrypted_db;
+use crate::error::{NonEmpty, RecoveryAction, RecoveryError, RecoveryKind};
 use crate::id::new_ulid;
 use crate::secrets::{
     delete_claude_api_key, has_claude_api_key, load_claude_api_key, save_claude_api_key,
@@ -79,12 +80,15 @@ fn now_ms() -> i64 {
 
 /// Returns true if a household already exists (DB file + household row present).
 #[tauri::command]
-pub async fn check_setup_status(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
-    let path = db_path(&app)?;
+pub async fn check_setup_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<bool, RecoveryError> {
+    let path = db_path(&app).map_err(RecoveryError::show_help)?;
     if !path.exists() {
         return Ok(false);
     }
-    let sp = salt_path(&app)?;
+    let sp = salt_path(&app).map_err(RecoveryError::show_help)?;
     if !sp.exists() {
         return Ok(false);
     }
@@ -94,7 +98,7 @@ pub async fn check_setup_status(app: AppHandle, state: State<'_, AppState>) -> R
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM households")
             .fetch_one(&pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| RecoveryError::show_help(e.to_string()))?;
         return Ok(count.0 > 0);
     }
     // DB file exists but pool isn't open — household exists (needs unlock flow).
@@ -115,17 +119,36 @@ pub async fn create_household(
     app: AppHandle,
     state: State<'_, AppState>,
     args: CreateHouseholdArgs,
-) -> Result<String, String> {
-    let path = db_path(&app)?;
-    let sp = salt_path(&app)?;
+) -> Result<String, RecoveryError> {
+    let path = db_path(&app).map_err(RecoveryError::show_help)?;
+    let sp = salt_path(&app).map_err(RecoveryError::show_help)?;
 
     // Generate a fresh random 16-byte salt
     let salt: [u8; 16] = rand_salt();
-    std::fs::write(&sp, salt).map_err(|e| format!("Cannot write salt: {e}"))?;
+    std::fs::write(&sp, salt)
+        .map_err(|e| RecoveryError::show_help(format!("Cannot write salt: {e}")))?;
 
     let pool = create_encrypted_db(&path, &args.passphrase, &salt)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            // Wrong passphrase / DB-open failure is recoverable by retyping the
+            // passphrase, so surface EditField as the primary action.
+            RecoveryError::new(
+                format!("Could not open the database: {e}"),
+                NonEmpty::new(
+                    RecoveryAction {
+                        kind: RecoveryKind::EditField,
+                        label: "Re-enter passphrase".to_string(),
+                        is_primary: true,
+                    },
+                    vec![RecoveryAction {
+                        kind: RecoveryKind::Discard,
+                        label: "Discard".to_string(),
+                        is_primary: false,
+                    }],
+                ),
+            )
+        })?;
 
     let household_id = new_ulid();
     let ts = now_ms();
@@ -140,7 +163,7 @@ pub async fn create_household(
     .bind(ts)
     .execute(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     // Seed owner user
     let user_id = new_ulid();
@@ -154,12 +177,12 @@ pub async fn create_household(
     .bind(ts)
     .execute(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     // Seed chart of accounts
     seed_chart_of_accounts(&pool, &household_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     // Store pool and household id in state
     *state.pool.lock().expect("pool lock") = Some(pool);
@@ -180,9 +203,19 @@ pub struct CreateAccountArgs {
 pub async fn create_account(
     state: State<'_, AppState>,
     args: CreateAccountArgs,
-) -> Result<String, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
-    let household_id = state.household_id.lock().expect("household_id lock").clone().ok_or("Household not set")?;
+) -> Result<String, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     let normal_balance = match args.account_type.as_str() {
         "asset" | "expense" => "debit",
@@ -197,7 +230,7 @@ pub async fn create_account(
     .bind(&args.account_type)
     .fetch_optional(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     let account_id = new_ulid();
     let ts = now_ms();
@@ -215,7 +248,7 @@ pub async fn create_account(
     .bind(ts)
     .execute(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     Ok(account_id)
 }
@@ -231,9 +264,19 @@ pub struct SetOpeningBalanceArgs {
 pub async fn set_opening_balance(
     state: State<'_, AppState>,
     args: SetOpeningBalanceArgs,
-) -> Result<(), String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
-    let household_id = state.household_id.lock().expect("household_id lock").clone().ok_or("Household not set")?;
+) -> Result<(), RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     if args.amount_cents == 0 {
         return Ok(());
@@ -246,9 +289,11 @@ pub async fn set_opening_balance(
     .bind(&household_id)
     .fetch_optional(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
-    let obe_id = obe.map(|(id,)| id).ok_or("Opening Balance Equity account not found")?;
+    let obe_id = obe
+        .map(|(id,)| id)
+        .ok_or_else(|| RecoveryError::show_help("Opening Balance Equity account not found"))?;
 
     // Get account type to determine debit/credit side
     let account_type: (String,) =
@@ -256,7 +301,7 @@ pub async fn set_opening_balance(
             .bind(&args.account_id)
             .fetch_one(&pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     let (primary_side, equity_side) = match account_type.0.as_str() {
         "asset" => ("debit", "credit"),
@@ -280,7 +325,7 @@ pub async fn set_opening_balance(
     .bind(ts)
     .execute(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     sqlx::query(
         "INSERT INTO journal_lines (id, transaction_id, account_id, amount, side, created_at)
@@ -294,7 +339,7 @@ pub async fn set_opening_balance(
     .bind(ts)
     .execute(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     sqlx::query(
         "INSERT INTO journal_lines (id, transaction_id, account_id, amount, side, created_at)
@@ -308,7 +353,7 @@ pub async fn set_opening_balance(
     .bind(ts)
     .execute(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     Ok(())
 }
@@ -324,14 +369,19 @@ pub struct CreateEnvelopeArgs {
 pub async fn create_envelope(
     state: State<'_, AppState>,
     args: CreateEnvelopeArgs,
-) -> Result<String, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<String, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     crate::core::envelope::create_envelope_with_current_period(
         &pool,
@@ -340,6 +390,7 @@ pub async fn create_envelope(
         now_ms(),
     )
     .await
+    .map_err(RecoveryError::show_help)
 }
 
 #[derive(Deserialize)]
@@ -355,7 +406,7 @@ pub struct ImportSummary {
 /// Stub hledger import — TODO(phase2): full parser with CoA mapping.
 /// Currently counts non-comment, non-blank lines and returns a summary.
 #[tauri::command]
-pub async fn import_hledger(args: ImportHledgerArgs) -> Result<String, String> {
+pub async fn import_hledger(args: ImportHledgerArgs) -> Result<String, RecoveryError> {
     let lines: Vec<&str> = args
         .content
         .lines()
@@ -377,7 +428,9 @@ pub async fn import_hledger(args: ImportHledgerArgs) -> Result<String, String> {
 
 /// Returns AI defaults (timezone, default account). Stub for Phase 1.
 #[tauri::command]
-pub async fn get_ai_defaults(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn get_ai_defaults(
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, RecoveryError> {
     let hh_guard = state.household_id.lock().expect("household_id lock");
     if hh_guard.is_none() {
         return Ok(serde_json::json!({ "status": "No household configured" }));
@@ -391,10 +444,10 @@ pub async fn get_ai_defaults(state: State<'_, AppState>) -> Result<serde_json::V
 
 /// Reverses the most recently posted AI transaction. Stub for Phase 1.
 #[tauri::command]
-pub async fn undo_last_transaction(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn undo_last_transaction(state: State<'_, AppState>) -> Result<(), RecoveryError> {
     let guard = state.pool.lock().expect("pool lock");
     if guard.is_none() {
-        return Err("No database open".to_string());
+        return Err(RecoveryError::show_help("No database open"));
     }
     // TODO(phase2): implement full GAAP reversal via core::correction
     Ok(())
@@ -416,19 +469,24 @@ pub struct AppendChatMessageArgs {
 pub async fn append_chat_message(
     state: State<'_, AppState>,
     args: AppendChatMessageArgs,
-) -> Result<(), String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<(), RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     ChatRepo::new(pool)
         .append(&household_id, &args.id, &args.kind, &args.payload, args.ts, now_ms())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -443,14 +501,19 @@ pub struct ListChatMessagesArgs {
 pub async fn list_chat_messages(
     state: State<'_, AppState>,
     args: ListChatMessagesArgs,
-) -> Result<Vec<ChatMessageRow>, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<Vec<ChatMessageRow>, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     let before_ts = args.before_ts.unwrap_or(i64::MAX);
     let limit = args.limit.unwrap_or(50).clamp(1, 500);
@@ -458,7 +521,7 @@ pub async fn list_chat_messages(
     ChatRepo::new(pool)
         .list_before(&household_id, before_ts, limit)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 // ── Chat turn orchestration ───────────────────────────────────────────────────
@@ -475,21 +538,40 @@ pub struct SubmitMessageArgs {
 pub async fn submit_message(
     state: State<'_, AppState>,
     args: SubmitMessageArgs,
-) -> Result<MessageResponse, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<MessageResponse, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     let api_key = load_claude_api_key(&KeyringStore::new())
-        .map_err(|e| e.to_string())?
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?
         .ok_or_else(|| {
-            "No Claude API key configured. Paste your key into chat when prompted, \
-             or set CLAUDE_API_KEY for development."
-                .to_string()
+            // Missing API key is recoverable by re-entering it.
+            RecoveryError::new(
+                "No Claude API key configured. Paste your key into chat when prompted, \
+                 or set CLAUDE_API_KEY for development.",
+                NonEmpty::new(
+                    RecoveryAction {
+                        kind: RecoveryKind::EditField,
+                        label: "Enter API key".to_string(),
+                        is_primary: true,
+                    },
+                    vec![RecoveryAction {
+                        kind: RecoveryKind::ShowHelp,
+                        label: "Get help".to_string(),
+                        is_primary: false,
+                    }],
+                ),
+            )
         })?;
 
     let adapter = Arc::new(ClaudeAdapter::new(api_key));
@@ -498,7 +580,7 @@ pub async fn submit_message(
     orchestrator
         .handle(&household_id, args.text.trim())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -521,23 +603,32 @@ pub enum CommitOutcome {
 pub async fn commit_proposal(
     state: State<'_, AppState>,
     args: CommitProposalArgs,
-) -> Result<CommitOutcome, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<CommitOutcome, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     match ledger_commit(&pool, &household_id, &args.proposal).await {
         Ok(txn_id) => Ok(CommitOutcome::Committed { txn_id }),
         Err(LedgerError::ValidationFailed(result)) => {
             Ok(CommitOutcome::Rejected { validation: result })
         }
-        Err(LedgerError::Database(e)) => Err(e.to_string()),
+        Err(LedgerError::Database(e)) => Err(RecoveryError::show_help(e.to_string())),
         Err(LedgerError::OpeningBalanceExists) => {
-            Err("Opening balance already exists for this account".to_string())
+            // The opening balance already exists; the user's recovery is to
+            // discard this attempt rather than overwrite it.
+            Err(RecoveryError::discard(
+                "Opening balance already exists for this account.",
+            ))
         }
     }
 }
@@ -551,24 +642,42 @@ pub struct SetApiKeyArgs {
 
 /// Saves the Claude API key to the OS keychain.
 #[tauri::command]
-pub async fn set_api_key(args: SetApiKeyArgs) -> Result<(), String> {
+pub async fn set_api_key(args: SetApiKeyArgs) -> Result<(), RecoveryError> {
     let trimmed = args.key.trim();
     if trimmed.is_empty() {
-        return Err("API key cannot be empty".to_string());
+        // Empty input is recoverable by retyping the key.
+        return Err(RecoveryError::new(
+            "API key cannot be empty.",
+            NonEmpty::new(
+                RecoveryAction {
+                    kind: RecoveryKind::EditField,
+                    label: "Re-enter key".to_string(),
+                    is_primary: true,
+                },
+                vec![RecoveryAction {
+                    kind: RecoveryKind::Discard,
+                    label: "Discard".to_string(),
+                    is_primary: false,
+                }],
+            ),
+        ));
     }
-    save_claude_api_key(&KeyringStore::new(), trimmed).map_err(|e| e.to_string())
+    save_claude_api_key(&KeyringStore::new(), trimmed)
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 /// Returns true if an API key is configured (env var or keychain).
 #[tauri::command]
-pub async fn has_api_key() -> Result<bool, String> {
-    has_claude_api_key(&KeyringStore::new()).map_err(|e| e.to_string())
+pub async fn has_api_key() -> Result<bool, RecoveryError> {
+    has_claude_api_key(&KeyringStore::new())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 /// Removes the Claude API key from the keychain. Env var (if set) is untouched.
 #[tauri::command]
-pub async fn delete_api_key() -> Result<(), String> {
-    delete_claude_api_key(&KeyringStore::new()).map_err(|e| e.to_string())
+pub async fn delete_api_key() -> Result<(), RecoveryError> {
+    delete_claude_api_key(&KeyringStore::new())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 // ── Deterministic salt generation (simple, uses OS random) ────────────────────
@@ -608,50 +717,67 @@ use crate::core::read::{
 #[tauri::command]
 pub async fn get_account_balances(
     state: State<'_, AppState>,
-) -> Result<Vec<AccountBalance>, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<Vec<AccountBalance>, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
-    read_balances(&pool, &household_id).await.map_err(|e| e.to_string())
+    read_balances(&pool, &household_id)
+        .await
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 #[tauri::command]
 pub async fn get_current_envelope_periods(
     state: State<'_, AppState>,
-) -> Result<Vec<EnvelopeStatus>, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<Vec<EnvelopeStatus>, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     read_envelopes(&pool, &household_id, now_ms())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 #[tauri::command]
 pub async fn get_pending_transactions(
     state: State<'_, AppState>,
-) -> Result<Vec<ComingUpTxn>, String> {
-    let pool = state.pool.lock().expect("pool lock").clone().ok_or("Database not open")?;
+) -> Result<Vec<ComingUpTxn>, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
     let household_id = state
         .household_id
         .lock()
         .expect("household_id lock")
         .clone()
-        .ok_or("Household not set")?;
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     read_coming_up(&pool, &household_id, now_ms(), 50)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 // ── GnuCash import commands ──────────────────────────────────────────────────
@@ -664,11 +790,11 @@ pub struct ReadGnuCashArgs {
 #[tauri::command]
 pub async fn read_gnucash_file(
     args: ReadGnuCashArgs,
-) -> Result<crate::core::import::gnucash::GnuCashPreview, String> {
+) -> Result<crate::core::import::gnucash::GnuCashPreview, RecoveryError> {
     use std::path::Path;
     crate::core::import::gnucash::reader::preview(Path::new(&args.path))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -680,21 +806,22 @@ pub struct BuildImportPlanArgs {
 pub async fn gnucash_build_default_plan(
     state: State<'_, AppState>,
     args: BuildImportPlanArgs,
-) -> Result<crate::core::import::gnucash::ImportPlan, String> {
+) -> Result<crate::core::import::gnucash::ImportPlan, RecoveryError> {
     use crate::core::import::gnucash::{mapper, reader};
     use std::path::Path;
 
     let household_id = {
         let g = state.household_id.lock().expect("household_id");
-        g.clone().ok_or_else(|| "No household configured".to_string())?
+        g.clone()
+            .ok_or_else(|| RecoveryError::show_help("No household configured"))?
     };
     let book = reader::read(Path::new(&args.path))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     let import_id = new_ulid();
     let plan = mapper::build_default_plan(household_id, import_id, &book, new_ulid)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     *state.active_import.lock().expect("active_import") = Some(plan.clone());
     Ok(plan)
@@ -709,30 +836,52 @@ pub struct ApplyMappingEditArgs {
 pub async fn gnucash_apply_mapping_edit(
     state: State<'_, AppState>,
     args: ApplyMappingEditArgs,
-) -> Result<crate::core::import::gnucash::ImportPlan, String> {
+) -> Result<crate::core::import::gnucash::ImportPlan, RecoveryError> {
     use crate::core::import::gnucash::mapper;
 
     let mut guard = state.active_import.lock().expect("active_import");
-    let plan = guard.as_mut().ok_or_else(|| "No active import plan".to_string())?;
-    mapper::apply_mapping_edit(plan, &args.edit).map_err(|e| e.to_string())?;
+    let plan = guard
+        .as_mut()
+        .ok_or_else(|| RecoveryError::show_help("No active import plan"))?;
+    mapper::apply_mapping_edit(plan, &args.edit)
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
     Ok(plan.clone())
 }
 
 #[tauri::command]
 pub async fn commit_gnucash_import(
     state: State<'_, AppState>,
-) -> Result<crate::core::import::gnucash::ImportReceipt, String> {
+) -> Result<crate::core::import::gnucash::ImportReceipt, RecoveryError> {
     let pool_opt = state.pool.lock().expect("pool").clone();
-    let pool = pool_opt.ok_or_else(|| "No database open".to_string())?;
+    let pool = pool_opt.ok_or_else(|| RecoveryError::show_help("No database open"))?;
 
     let plan = {
         let g = state.active_import.lock().expect("active_import");
-        g.clone().ok_or_else(|| "No active import plan".to_string())?
+        g.clone()
+            .ok_or_else(|| RecoveryError::show_help("No active import plan"))?
     };
 
+    // Import-commit failures roll back atomically; offer Discard alongside ShowHelp
+    // so the user can abandon the import without leaving a partial state.
     let receipt = crate::core::import::gnucash::committer::commit(&pool, &plan, now_ms())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            RecoveryError::new(
+                format!("Could not import the GnuCash file: {e}"),
+                NonEmpty::new(
+                    RecoveryAction {
+                        kind: RecoveryKind::ShowHelp,
+                        label: "Get help".to_string(),
+                        is_primary: true,
+                    },
+                    vec![RecoveryAction {
+                        kind: RecoveryKind::Discard,
+                        label: "Discard import".to_string(),
+                        is_primary: false,
+                    }],
+                ),
+            )
+        })?;
 
     *state.active_import.lock().expect("active_import") = None;
     Ok(receipt)
@@ -747,12 +896,12 @@ pub struct RollbackArgs {
 pub async fn rollback_gnucash_import(
     state: State<'_, AppState>,
     args: RollbackArgs,
-) -> Result<(), String> {
+) -> Result<(), RecoveryError> {
     let pool_opt = state.pool.lock().expect("pool").clone();
-    let pool = pool_opt.ok_or_else(|| "No database open".to_string())?;
+    let pool = pool_opt.ok_or_else(|| RecoveryError::show_help("No database open"))?;
     crate::core::import::gnucash::committer::rollback(&pool, &args.import_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -765,18 +914,22 @@ pub struct ReconcileArgs {
 pub async fn reconcile_gnucash_import(
     state: State<'_, AppState>,
     args: ReconcileArgs,
-) -> Result<crate::core::import::gnucash::reconcile::BalanceReportArtifact, String> {
+) -> Result<crate::core::import::gnucash::reconcile::BalanceReportArtifact, RecoveryError> {
     use crate::core::import::gnucash::{reader, reconcile, AccountMapping, ImportPlan};
     use std::path::Path;
 
     let pool_opt = state.pool.lock().expect("pool").clone();
-    let pool = pool_opt.ok_or_else(|| "No database open".to_string())?;
-    let household_id = state.household_id.lock().expect("hh").clone()
-        .ok_or_else(|| "No household configured".to_string())?;
+    let pool = pool_opt.ok_or_else(|| RecoveryError::show_help("No database open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("hh")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("No household configured"))?;
 
     let book = reader::read(Path::new(&args.path))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     // Rebuild minimal AccountMapping set from accounts table (rows stamped with this import_id).
     // Query by gnc_guid directly — leaf-name matching is unsound for books with repeated
@@ -790,7 +943,7 @@ pub async fn reconcile_gnucash_import(
     .bind(&args.import_id)
     .fetch_all(&pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     let by_guid: std::collections::HashMap<&str, &crate::core::import::gnucash::GncAccount> =
         book.accounts.iter().map(|a| (a.guid.as_str(), a)).collect();
@@ -816,7 +969,24 @@ pub async fn reconcile_gnucash_import(
         transactions: vec![], // unused by reconcile
     };
 
+    // Reconcile mismatches: offer Discard so the user can roll back the import.
     reconcile::reconcile(&pool, &plan, &book)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            RecoveryError::new(
+                format!("Could not reconcile the GnuCash import: {e}"),
+                NonEmpty::new(
+                    RecoveryAction {
+                        kind: RecoveryKind::ShowHelp,
+                        label: "Get help".to_string(),
+                        is_primary: true,
+                    },
+                    vec![RecoveryAction {
+                        kind: RecoveryKind::Discard,
+                        label: "Discard import".to_string(),
+                        is_primary: false,
+                    }],
+                ),
+            )
+        })
 }

@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 import type { ChatMessage } from "../components/chat/chatTypes";
 import type { SetupCardVariant } from "../components/onboarding/SetupCard";
-import type { ImportPlan } from "@tally/core-types";
+import type { ImportPlan, RecoveryError } from "@tally/core-types";
 import type { GnuCashReconcileReport } from "../components/artifacts/GnuCashReconcileCard";
 import { generateUlid } from "../utils/ulid";
 
@@ -23,6 +23,11 @@ interface ChatStore {
   addGnuCashReconcileMessage: (report: GnuCashReconcileReport) => void;
   updateMessage: (id: string, patch: Partial<ChatMessage>) => void;
   removeMessage: (id: string) => void;
+  // Task 12: convert a RecoveryError into a proactive-advisory chat message
+  // and append it. Kept optional on the interface so existing call sites
+  // (e.g. safeInvoke's defaultDispatch) keep type-checking via optional
+  // chaining; the implementation below always supplies it.
+  appendAdvisory?: (err: RecoveryError) => void;
 }
 
 function makeBaseMessage<K extends ChatMessage["kind"]>(kind: K): { kind: K; id: string; ts: number } {
@@ -107,5 +112,13 @@ export const useChatStore = create<ChatStore>((set) => ({
     set((state) => ({
       localMessages: state.localMessages.filter((m) => m.id !== id),
     }));
+  },
+  appendAdvisory: (err) => {
+    const message: ChatMessage = {
+      ...makeBaseMessage("proactive"),
+      text: err.message,
+      recovery: [...err.recovery],
+    };
+    set((state) => ({ localMessages: [...state.localMessages, message] }));
   },
 }));

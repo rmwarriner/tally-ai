@@ -1,7 +1,8 @@
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import type { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { useEffect, useRef } from "react";
 
 import type { ChatMessage } from "../components/chat/chatTypes";
+import { safeInvoke } from "../lib/safeInvoke";
 import { useChatStore } from "../stores/chatStore";
 import { useOnboardingStore } from "../stores/onboardingStore";
 
@@ -13,15 +14,21 @@ interface ChatMessageRow {
 }
 
 export interface ChatPersistenceDeps {
-  invoke: typeof tauriInvoke;
+  invoke?: typeof tauriInvoke;
 }
 
-async function loadHistory(invoke: typeof tauriInvoke): Promise<ChatMessage[]> {
-  const rows = await invoke<ChatMessageRow[]>("list_chat_messages", {
-    args: { before_ts: null, limit: 500 },
-  });
+async function loadHistory(deps: ChatPersistenceDeps): Promise<ChatMessage[]> {
+  const r = await safeInvoke<ChatMessageRow[]>(
+    "list_chat_messages",
+    { args: { before_ts: null, limit: 500 } },
+    { invoke: deps.invoke },
+  );
+  if (!r.ok) {
+    console.warn("chat hydrate failed:", r.error);
+    return [];
+  }
   const messages: ChatMessage[] = [];
-  for (const row of rows) {
+  for (const row of r.value) {
     try {
       messages.push(JSON.parse(row.payload) as ChatMessage);
     } catch {
@@ -35,33 +42,34 @@ export function buildChatPersistence(deps: ChatPersistenceDeps) {
   async function hydrate(): Promise<void> {
     const currentLength = useChatStore.getState().localMessages.length;
     if (currentLength > 0) return;
-    try {
-      const messages = await loadHistory(deps.invoke);
+    const messages = await loadHistory(deps);
+    if (messages.length > 0) {
       useChatStore.setState({ localMessages: messages });
-    } catch (err) {
-      console.warn("chat hydrate failed:", err);
     }
   }
 
-  function persist(message: ChatMessage): Promise<void> {
-    return deps
-      .invoke<void>("append_chat_message", {
+  async function persist(message: ChatMessage): Promise<void> {
+    const r = await safeInvoke<void>(
+      "append_chat_message",
+      {
         args: {
           id: message.id,
           kind: message.kind,
           payload: JSON.stringify(message),
           ts: message.ts,
         },
-      })
-      .catch((err) => {
-        console.warn("chat persist failed:", message.id, err);
-      });
+      },
+      { invoke: deps.invoke },
+    );
+    if (!r.ok) {
+      console.warn("chat persist failed:", message.id, r.error);
+    }
   }
 
   return { hydrate, persist };
 }
 
-export function useChatPersistence(deps: ChatPersistenceDeps = { invoke: tauriInvoke }): void {
+export function useChatPersistence(deps: ChatPersistenceDeps = {}): void {
   const hydrateDoneRef = useRef(false);
   const persistedIdsRef = useRef<Set<string>>(new Set());
   const phase = useOnboardingStore((s) => s.phase);

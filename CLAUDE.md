@@ -89,7 +89,7 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 - Stub Phase 2 extension points with clear TODO(phase2) comments.
 
-## Implementation status (as of 2026-04-26)
+## Implementation status (as of 2026-04-28)
 
 **Chat surface (T-033–T-039, T-044):**
 - Chat thread: message rendering by type, date separators, auto-scroll, new-message
@@ -153,6 +153,39 @@ a chat interface. There are no forms and no edit screens — all writes go throu
   action set against actual code. New rules MUST add a row to this matrix.
 - Two follow-ups filed: `EnvelopeMismatch` unimplemented (#113);
   `PossibleDuplicate` rule scoping (#114).
+
+**safeInvoke + ErrorBoundary (T-064):**
+- `apps/desktop/src/lib/safeInvoke.ts` is the single surface translating
+  Tauri command errors into `RecoveryError = { message, recovery: NonEmpty<RecoveryAction> }`.
+  Two shapes: `safeInvoke` returns `Result<T, RecoveryError>` for inline
+  handling; `safeInvokeOrAdvise` emits a proactive advisory chat message
+  via `useChatStore.appendAdvisory` and returns `T | null`.
+- `RecoveryError` Rust type in `core::error`; mirror in `core-types`.
+  Every `#[tauri::command]` returns `Result<T, RecoveryError>` (24 commands
+  migrated). `chatStore.appendAdvisory(err)` reuses the proactive variant.
+- ESLint flat config bans direct `invoke` imports from `@tauri-apps/api/core`
+  (`@typescript-eslint/no-restricted-imports` with `allowTypeImports: true`).
+  Pre-commit hook runs lint, typecheck, tests, and 80% coverage gate.
+- Render-time `<ErrorBoundary>` wraps `<App>` in `main.tsx` with `role="alert"`
+  + "Get help" reload button; logs to console.
+- `QueryClientProvider` lives in `main.tsx` above `<ErrorBoundary>`'s
+  children — App's body hooks (`useOnboardingEngine` → `useInvalidateSidebar`)
+  consume the provider context.
+
+**Component behavior matrix + a11y framework (T-061, T-063):**
+- `apps/desktop/src/__tests__/MATRIX.md` is the canonical inventory of
+  React component requirements. Covers `TransactionCard` (4 states),
+  `ChatThread` (10 message kinds, separators, scroll, infinite history),
+  `InputBar` (slash palette, chip strip, auto-grow). New components MUST
+  add a row.
+- `apps/desktop/src/test/axe.ts` exposes `checkA11y` + `expectNoA11yViolations`.
+  Every matrix-listed surface has at least one axe-wrapped render.
+- Live a11y audit deferred to beta self-testing; framework ready in
+  `docs/superpowers/a11y-2026-04.md`. Three structural items filed as
+  Phase 2 issues: native widgets (#126), streaming live region (#127),
+  full keyboard map (#128).
+- Doc-discipline rule (T-065) added: every `feat:` PR landing ticket work
+  updates this Implementation status section. See CONTRIBUTING.md.
 
 ## Phase 2 stubs (TODO(phase2) in code)
 

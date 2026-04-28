@@ -10,6 +10,7 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -28,8 +29,12 @@
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@typescript-eslint/eslint-plugin": "^8.59.1",
+    "@typescript-eslint/parser": "^8.59.1",
     "@vitejs/plugin-react": "^6",
     "@vitest/coverage-v8": "^4.1.5",
+    "axe-core": "^4.11.3",
+    "eslint": "^10.2.1",
     "jsdom": "^29.1.0",
     "typescript": "^6",
     "vite": "^8",

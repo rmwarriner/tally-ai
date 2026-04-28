@@ -145,7 +145,11 @@ describe("useCommitProposal", () => {
   it("surfaces invoke failures as a commit_error and system message", async () => {
     seedPendingMessage("msg_1", sampleProposal());
     const invoke = vi.fn(async () => {
-      throw new Error("database locked");
+      // Tauri commands now reject with a serialized RecoveryError shape.
+      throw {
+        message: "database locked",
+        recovery: [{ kind: "SHOW_HELP", label: "Get help", is_primary: true }],
+      };
     });
     const { wrapper } = makeWrapper();
 

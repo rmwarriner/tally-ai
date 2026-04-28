@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
+
+import { safeInvoke } from "../lib/safeInvoke";
 
 export interface AccountBalance {
   id: string;
@@ -30,7 +31,11 @@ export type PendingTxn = ComingUpTxn;
 export function useAccountBalances() {
   return useQuery({
     queryKey: ["sidebar", "accounts"],
-    queryFn: async () => invoke<AccountBalance[]>("get_account_balances"),
+    queryFn: async () => {
+      const r = await safeInvoke<AccountBalance[]>("get_account_balances");
+      if (!r.ok) throw r.error;
+      return r.value;
+    },
     staleTime: 10_000,
   });
 }
@@ -38,7 +43,11 @@ export function useAccountBalances() {
 export function useEnvelopeStatuses() {
   return useQuery({
     queryKey: ["sidebar", "envelopes"],
-    queryFn: async () => invoke<EnvelopeStatus[]>("get_current_envelope_periods"),
+    queryFn: async () => {
+      const r = await safeInvoke<EnvelopeStatus[]>("get_current_envelope_periods");
+      if (!r.ok) throw r.error;
+      return r.value;
+    },
     staleTime: 10_000,
   });
 }
@@ -46,7 +55,11 @@ export function useEnvelopeStatuses() {
 export function usePendingTransactions() {
   return useQuery({
     queryKey: ["sidebar", "pending"],
-    queryFn: async () => invoke<ComingUpTxn[]>("get_pending_transactions"),
+    queryFn: async () => {
+      const r = await safeInvoke<ComingUpTxn[]>("get_pending_transactions");
+      if (!r.ok) throw r.error;
+      return r.value;
+    },
     staleTime: 10_000,
   });
 }

@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { checkA11y, expectNoA11yViolations } from "../../test/axe";
 import styles from "./TransactionCard.module.css";
 import { TransactionCard } from "./TransactionCard";
 import type { TransactionDisplay } from "./TransactionCard.types";
@@ -138,5 +139,72 @@ describe("TransactionCard", () => {
     fireEvent.click(screen.getByRole("button", { name: /show journal lines/i }));
     expect(screen.getByText(/groceries \/ food/i)).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /more information/i })).toBeInTheDocument();
+  });
+
+  it("renders journal lines with side and amount when expanded", () => {
+    render(<TransactionCard state="posted" transaction={makeTransaction()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /show journal lines/i }));
+
+    // Two lines: a debit and a credit, each with $42.99.
+    expect(screen.getByText("debit")).toBeInTheDocument();
+    expect(screen.getByText("credit")).toBeInTheDocument();
+    // Header amount + two journal-line amounts. Use >= so a sibling layout
+    // change (e.g. running total) doesn't make the test fail for non-behavioral
+    // reasons.
+    expect(screen.getAllByText("$42.99").length).toBeGreaterThanOrEqual(3);
+    const infoCircle = screen.getByRole("img", { name: /more information/i });
+    expect(infoCircle).toHaveAttribute("aria-label", "More information");
+  });
+
+  // Axe assertions — one render per matrix-listed state.
+  it("posted state passes axe", async () => {
+    const { container } = render(
+      <TransactionCard state="posted" transaction={makeTransaction()} />,
+    );
+    expectNoA11yViolations(await checkA11y(container));
+  });
+
+  it("pending (proposal) state passes axe", async () => {
+    const { container } = render(
+      <TransactionCard
+        state="pending"
+        transaction={makeTransaction()}
+        onConfirm={() => undefined}
+        onDiscard={() => undefined}
+      />,
+    );
+    expectNoA11yViolations(await checkA11y(container));
+  });
+
+  it("pending state with commitError passes axe", async () => {
+    const { container } = render(
+      <TransactionCard
+        state="pending"
+        transaction={makeTransaction()}
+        onConfirm={() => undefined}
+        onDiscard={() => undefined}
+        commitError="Account balance would go negative."
+      />,
+    );
+    expectNoA11yViolations(await checkA11y(container));
+  });
+
+  it("voided state passes axe", async () => {
+    const { container } = render(
+      <TransactionCard state="voided" transaction={makeTransaction()} />,
+    );
+    expectNoA11yViolations(await checkA11y(container));
+  });
+
+  it("correction-pair state passes axe", async () => {
+    const { container } = render(
+      <TransactionCard
+        state="correction_pair"
+        transaction={makeTransaction()}
+        replacement={makeTransaction({ id: "02HV", payee: "Trader Joes (corrected)" })}
+      />,
+    );
+    expectNoA11yViolations(await checkA11y(container));
   });
 });

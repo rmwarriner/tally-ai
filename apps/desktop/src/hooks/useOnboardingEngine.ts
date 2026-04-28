@@ -1,13 +1,27 @@
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import type { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo } from "react";
 
 import type { GnuCashPreview, ImportPlan, ImportReceipt, MappingEdit, ImportAccountType, NormalBalance } from "@tally/core-types";
 import type { SetupCardVariant } from "../components/onboarding/SetupCard";
 import type { GnuCashReconcileReport } from "../components/artifacts/GnuCashReconcileCard";
+import { safeInvoke } from "../lib/safeInvoke";
 import { useChatStore } from "../stores/chatStore";
 import { useOnboardingStore } from "../stores/onboardingStore";
 import type { FreshStep, MigrationStep } from "../stores/onboardingStore";
 import { useInvalidateSidebar } from "./useInvalidateSidebar";
+
+/// Routes a Tauri command through `safeInvoke` (so this hook doesn't directly
+/// import `invoke`), but preserves the existing throw-on-error semantics that
+/// the onboarding engine is built around.
+async function invokeOrThrow<T>(
+  injected: typeof tauriInvoke | undefined,
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  const r = await safeInvoke<T>(cmd, args, { invoke: injected });
+  if (!r.ok) throw r.error;
+  return r.value;
+}
 
 export interface OnboardingDeps {
   addSystemMessage: (text: string, tone?: "info" | "error") => void;
@@ -20,7 +34,7 @@ export interface OnboardingDeps {
   ) => void;
   addGnuCashMappingMessage: (plan: ImportPlan) => void;
   addGnuCashReconcileMessage: (report: GnuCashReconcileReport) => void;
-  invoke: typeof tauriInvoke;
+  invoke?: typeof tauriInvoke;
   invalidateSidebar: () => void | Promise<void>;
   readGnuCashFile: (path: string) => Promise<GnuCashPreview>;
   gnucashBuildDefaultPlan: (path: string) => Promise<ImportPlan>;
@@ -84,7 +98,7 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
   const store = useOnboardingStore;
 
   async function checkAndStart(): Promise<void> {
-    const exists = await deps.invoke<boolean>("check_setup_status", {});
+    const exists = await invokeOrThrow<boolean>(deps.invoke, "check_setup_status", {});
     if (exists) {
       store.getState().setPhase("complete");
       return;
@@ -149,7 +163,7 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
           );
           return;
         }
-        const id = await deps.invoke<string>("create_household", {
+        const id = await invokeOrThrow<string>(deps.invoke, "create_household", {
           name: householdName,
           timezone,
           passphrase,
@@ -195,12 +209,12 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
         updatedAccounts[idx] = { ...account, balanceCents: amountCents };
         currentState.patchDraft({ accounts: updatedAccounts });
 
-        const accountId = await deps.invoke<string>("create_account", {
+        const accountId = await invokeOrThrow<string>(deps.invoke, "create_account", {
           name: account.name,
           account_type: account.type,
         });
         void deps.invalidateSidebar();
-        await deps.invoke("set_opening_balance", {
+        await invokeOrThrow<void>(deps.invoke, "set_opening_balance", {
           account_id: accountId,
           amount_cents: amountCents,
         });
@@ -245,7 +259,7 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
       case "envelopes": {
         const name = input.trim();
         store.getState().addDraftEnvelope({ name });
-        await deps.invoke("create_envelope", { name });
+        await invokeOrThrow<void>(deps.invoke, "create_envelope", { name });
         void deps.invalidateSidebar();
         deps.addSetupCard("envelope_created", `${name} envelope created`, "Budget category added");
         store.getState().setFreshStep("more_envelopes");
@@ -276,15 +290,24 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
           );
         } else if (text.length > 0) {
           try {
-            await deps.invoke("set_api_key", { key: text });
+            await invokeOrThrow<void>(deps.invoke, "set_api_key", { key: text });
             deps.addSetupCard(
               "household_created",
               "API key saved",
               "Stored securely in your OS keychain",
             );
           } catch (err) {
+            // `invokeOrThrow` throws the normalized RecoveryError, which
+            // always has a `.message` string. Fall back to Error/String for
+            // any non-RecoveryError throws callers might wire up.
+            const detail =
+              typeof err === "object" && err !== null && "message" in err && typeof (err as { message: unknown }).message === "string"
+                ? (err as { message: string }).message
+                : err instanceof Error
+                  ? err.message
+                  : String(err);
             deps.addSystemMessage(
-              `Couldn't save that key: ${err instanceof Error ? err.message : String(err)}. Try again or say "skip".`,
+              `Couldn't save that key: ${detail}. Try again or say "skip".`,
               "error",
             );
             return;
@@ -320,7 +343,7 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
       case "file_drop": {
         const content = input.trim();
         state.patchDraft({ hledgerContent: content });
-        const summary = await deps.invoke<string>("import_hledger", { content });
+        const summary = await invokeOrThrow<string>(deps.invoke, "import_hledger", { content });
         void deps.invalidateSidebar();
         deps.addSystemMessage(`Import complete: ${summary}`, "info");
         state.setMigrationStep("coa_mapping");
@@ -527,28 +550,28 @@ export function useOnboardingEngine() {
   const invalidateSidebar = useInvalidateSidebar();
 
   const readGnuCashFile = useCallback(
-    (path: string) => tauriInvoke<GnuCashPreview>("read_gnucash_file", { path }),
+    (path: string) => invokeOrThrow<GnuCashPreview>(undefined, "read_gnucash_file", { path }),
     [],
   );
   const gnucashBuildDefaultPlan = useCallback(
-    (path: string) => tauriInvoke<ImportPlan>("gnucash_build_default_plan", { path }),
+    (path: string) => invokeOrThrow<ImportPlan>(undefined, "gnucash_build_default_plan", { path }),
     [],
   );
   const gnucashApplyMappingEdit = useCallback(
-    (edit: MappingEdit) => tauriInvoke<ImportPlan>("gnucash_apply_mapping_edit", { edit }),
+    (edit: MappingEdit) => invokeOrThrow<ImportPlan>(undefined, "gnucash_apply_mapping_edit", { edit }),
     [],
   );
   const commitGnuCashImport = useCallback(
-    () => tauriInvoke<ImportReceipt>("gnucash_commit_import", {}),
+    () => invokeOrThrow<ImportReceipt>(undefined, "gnucash_commit_import", {}),
     [],
   );
   const reconcileGnuCashImport = useCallback(
     (importId: string, path: string) =>
-      tauriInvoke<GnuCashReconcileReport>("reconcile_gnucash_import", { import_id: importId, path }),
+      invokeOrThrow<GnuCashReconcileReport>(undefined, "reconcile_gnucash_import", { import_id: importId, path }),
     [],
   );
   const rollbackGnuCashImport = useCallback(
-    (importId: string) => tauriInvoke<void>("rollback_gnucash_import", { import_id: importId }),
+    (importId: string) => invokeOrThrow<void>(undefined, "rollback_gnucash_import", { import_id: importId }),
     [],
   );
 
@@ -559,7 +582,6 @@ export function useOnboardingEngine() {
       addHandoffMessage,
       addGnuCashMappingMessage,
       addGnuCashReconcileMessage,
-      invoke: tauriInvoke,
       invalidateSidebar,
       readGnuCashFile,
       gnucashBuildDefaultPlan,
@@ -588,8 +610,6 @@ export function useOnboardingEngine() {
 
   useEffect(() => {
     void handler.checkAndStart();
-    // Run only once on mount — handler identity is stable via useMemo
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return {
