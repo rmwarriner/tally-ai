@@ -17,14 +17,19 @@ A conversational household finance app that makes tracking money effortless. Jus
 # Install dependencies
 pnpm install
 
-# Start development server
+# Run the full Tauri app (Rust backend + frontend)
+pnpm tauri:dev
+
+# OR run the frontend only (no Tauri IPC; useful for browser-based a11y tools)
 pnpm dev
 
-# Run tests
+# Run all tests (Rust + TS)
 pnpm test
+cargo test --all
 
-# Type-check
+# Type-check + lint
 pnpm typecheck
+pnpm lint
 ```
 
 ## Architecture
