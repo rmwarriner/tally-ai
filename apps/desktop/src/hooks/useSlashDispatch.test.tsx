@@ -1,4 +1,6 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useChatStore } from "../stores/chatStore";
@@ -10,6 +12,16 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 
+function makeWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  return { queryClient, wrapper };
+}
+
 function makeDeps(overrides: Partial<Parameters<typeof dispatchSlashCommand>[2]> = {}) {
   return {
     sendMessage: vi.fn(),
@@ -17,6 +29,7 @@ function makeDeps(overrides: Partial<Parameters<typeof dispatchSlashCommand>[2]>
     addArtifactMessage: vi.fn(),
     undoLastTransaction: vi.fn().mockResolvedValue(undefined),
     getAIDefaults: vi.fn().mockResolvedValue({ timezone: "America/Chicago", preferred_accounts: ["Checking"] }),
+    invalidateSidebar: vi.fn(),
     ...overrides,
   };
 }
@@ -53,6 +66,13 @@ describe("dispatchSlashCommand", () => {
     expect(deps.addSystemMessage).toHaveBeenCalledWith("Last transaction undone.", "info");
   });
 
+  it("/undo invalidates sidebar after success so balances refresh", async () => {
+    const deps = makeDeps();
+    await dispatchSlashCommand("/undo", "", deps);
+
+    expect(deps.invalidateSidebar).toHaveBeenCalled();
+  });
+
   it("/undo inserts error system message when command fails", async () => {
     const deps = makeDeps({
       undoLastTransaction: vi.fn().mockRejectedValue(new Error("nope")),
@@ -63,6 +83,15 @@ describe("dispatchSlashCommand", () => {
       "Nothing to undo, or the last transaction cannot be reversed.",
       "error",
     );
+  });
+
+  it("/undo does not invalidate sidebar on failure", async () => {
+    const deps = makeDeps({
+      undoLastTransaction: vi.fn().mockRejectedValue(new Error("nope")),
+    });
+    await dispatchSlashCommand("/undo", "", deps);
+
+    expect(deps.invalidateSidebar).not.toHaveBeenCalled();
   });
 
   it("/help inserts the commands artifact locally", async () => {
@@ -104,7 +133,8 @@ describe("useSlashDispatch", () => {
     // The real useSendMessage invokes submit_message — return a valid text response
     // so the async tail of sendMessage resolves cleanly.
     vi.mocked(invoke).mockResolvedValue({ kind: "text", text: "ok" });
-    const { result } = renderHook(() => useSlashDispatch());
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useSlashDispatch(), { wrapper });
 
     await act(async () => {
       await result.current("/budget");
@@ -119,7 +149,8 @@ describe("useSlashDispatch", () => {
 
   it("handles /undo by invoking command and adding system message", async () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
-    const { result } = renderHook(() => useSlashDispatch());
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useSlashDispatch(), { wrapper });
 
     await act(async () => {
       await result.current("/undo");
@@ -130,9 +161,23 @@ describe("useSlashDispatch", () => {
     expect(message).toMatchObject({ kind: "system", text: "Last transaction undone." });
   });
 
+  it("invalidates sidebar after /undo so balances refresh", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    const { queryClient, wrapper } = makeWrapper();
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useSlashDispatch(), { wrapper });
+
+    await act(async () => {
+      await result.current("/undo");
+    });
+
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["sidebar"] });
+  });
+
   it("handles /defaults by loading defaults and inserting an artifact", async () => {
     vi.mocked(invoke).mockResolvedValue({ timezone: "America/Chicago" });
-    const { result } = renderHook(() => useSlashDispatch());
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useSlashDispatch(), { wrapper });
 
     await act(async () => {
       await result.current("/defaults");

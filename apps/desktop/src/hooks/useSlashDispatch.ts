@@ -2,6 +2,7 @@ import { useCallback } from "react";
 
 import { safeInvoke } from "../lib/safeInvoke";
 import { useChatStore } from "../stores/chatStore";
+import { useInvalidateSidebar } from "./useInvalidateSidebar";
 import { useSendMessage } from "./useSendMessage";
 
 const UNKNOWN_COMMAND_MESSAGE = "Unknown command. Type /help to see available commands.";
@@ -23,6 +24,7 @@ interface SlashDispatchDeps {
   addArtifactMessage: (title: string, content: string) => void;
   undoLastTransaction: () => Promise<void>;
   getAIDefaults: () => Promise<Record<string, unknown>>;
+  invalidateSidebar: () => void | Promise<void>;
 }
 
 function parseRecentCount(args: string): number {
@@ -74,6 +76,7 @@ export async function dispatchSlashCommand(
       try {
         await deps.undoLastTransaction();
         deps.addSystemMessage("Last transaction undone.", "info");
+        void deps.invalidateSidebar();
       } catch {
         deps.addSystemMessage(
           "Nothing to undo, or the last transaction cannot be reversed.",
@@ -107,6 +110,7 @@ export function useSlashDispatch() {
   const sendMessage = useSendMessage();
   const addSystemMessage = useChatStore((state) => state.addSystemMessage);
   const addArtifactMessage = useChatStore((state) => state.addArtifactMessage);
+  const invalidateSidebar = useInvalidateSidebar();
 
   return useCallback(
     async (raw: string) => {
@@ -115,8 +119,9 @@ export function useSlashDispatch() {
         sendMessage,
         addSystemMessage,
         addArtifactMessage,
+        invalidateSidebar,
         undoLastTransaction: async () => {
-          const r = await safeInvoke<void>("undo_last_transaction");
+          const r = await safeInvoke<string>("undo_last_transaction");
           if (!r.ok) throw r.error;
         },
         getAIDefaults: async () => {
@@ -126,7 +131,7 @@ export function useSlashDispatch() {
         },
       });
     },
-    [addArtifactMessage, addSystemMessage, sendMessage],
+    [addArtifactMessage, addSystemMessage, invalidateSidebar, sendMessage],
   );
 }
 

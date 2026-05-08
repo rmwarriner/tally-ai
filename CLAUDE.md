@@ -89,7 +89,7 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 - Stub Phase 2 extension points with clear TODO(phase2) comments.
 
-## Implementation status (as of 2026-04-28)
+## Implementation status (as of 2026-05-08)
 
 **Chat surface (T-033–T-039, T-044):**
 - Chat thread: message rendering by type, date separators, auto-scroll, new-message
@@ -187,10 +187,33 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 - Doc-discipline rule (T-065) added: every `feat:` PR landing ticket work
   updates this Implementation status section. See CONTRIBUTING.md.
 
+**Playwright E2E + /undo wiring (T-062):**
+- `apps/desktop/e2e/` holds the Playwright suite, driven by a mocked
+  `window.__TAURI_INTERNALS__.invoke` injected via `addInitScript` in
+  `e2e/setup.ts`. Specs cover fresh-start onboarding, entry (text +
+  proposal Confirm/Discard + validation rejection), `/fix` palette and
+  dispatch, and `/undo` happy + no-history paths. Migration / hledger /
+  GnuCash import flows are out of scope for T-062 (GnuCash already covered
+  by `src-tauri/tests/gnucash_import_integration.rs`).
+- New rule of thumb: use `.last()` on text matchers — React.StrictMode
+  double-fires effects in dev and many prompts repeat across the flow.
+- Drift guard: `src-tauri/tests/orchestrator_e2e_contract.rs` exercises
+  `submit_message → commit_proposal → undo_last_transaction` against a
+  real encrypted SQLite + a `FixedProposalAdapter`, asserting the JSON
+  shapes the E2E mocks return still round-trip through the real backend.
+- `/undo` is no longer a stub. `commands::undo_last_transaction` now calls
+  `core::correction::undo_last_transaction` and maps `CorrectionError`
+  to `RecoveryError`. The frontend dispatcher (`useSlashDispatch`) also
+  invalidates the sidebar after a successful undo.
+- New CI job `e2e` runs Playwright on chromium against the Vite dev server
+  in parallel with `test`, `typecheck`, and `rust-test`. Browser binaries
+  are cached by `apps/desktop/package.json` hash.
+- E2E coverage rules live in `apps/desktop/e2e/MATRIX.md` — same discipline
+  as the React component MATRIX.
+
 ## Phase 2 stubs (TODO(phase2) in code)
 
 - Full hledger CoA mapping (`import_hledger` command).
-- GAAP undo via `core::correction` (`undo_last_transaction` command).
 - Persistent AI defaults table (`get_ai_defaults` command).
 - Proper CSPRNG for salt generation (currently `DefaultHasher` + time + pid).
 - Pre-existing `audit_log` write gap — no production code populates it yet

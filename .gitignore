@@ -23,5 +23,11 @@ target
 node_modules/
 coverage/
 
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
 # Git worktrees
 .worktrees/
