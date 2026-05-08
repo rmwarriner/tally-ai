@@ -14,6 +14,7 @@ use crate::ai::adapter::claude::ClaudeAdapter;
 use crate::ai::orchestrator::{MessageResponse, Orchestrator};
 use crate::chat::{ChatMessageRow, ChatRepo};
 use crate::core::coa::seed_chart_of_accounts;
+use crate::core::correction::{undo_last_transaction as core_undo, CorrectionError};
 use crate::core::ledger::{commit_proposal as ledger_commit, LedgerError};
 use crate::core::proposal::TransactionProposal;
 use crate::core::validation::ValidationResult;
@@ -442,15 +443,41 @@ pub async fn get_ai_defaults(
     }))
 }
 
-/// Reverses the most recently posted AI transaction. Stub for Phase 1.
+/// Reverses the most recently posted, non-opening-balance transaction.
+/// Returns the new reversal ULID on success.
 #[tauri::command]
-pub async fn undo_last_transaction(state: State<'_, AppState>) -> Result<(), RecoveryError> {
-    let guard = state.pool.lock().expect("pool lock");
-    if guard.is_none() {
-        return Err(RecoveryError::show_help("No database open"));
+pub async fn undo_last_transaction(state: State<'_, AppState>) -> Result<String, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
+
+    core_undo(&pool, &household_id).await.map_err(map_undo_error)
+}
+
+fn map_undo_error(err: CorrectionError) -> RecoveryError {
+    match err {
+        CorrectionError::NotFound => {
+            RecoveryError::discard("Nothing to undo. No posted transactions to reverse.")
+        }
+        CorrectionError::NotCorrectable => {
+            RecoveryError::show_help("That transaction can't be undone.")
+        }
+        CorrectionError::ValidationFailed(_) => {
+            RecoveryError::show_help("Couldn't undo that transaction.")
+        }
+        CorrectionError::Database(e) => {
+            RecoveryError::show_help(format!("Database error while undoing: {e}"))
+        }
     }
-    // TODO(phase2): implement full GAAP reversal via core::correction
-    Ok(())
 }
 
 #[derive(Deserialize)]
