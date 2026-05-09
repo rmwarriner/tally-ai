@@ -115,12 +115,21 @@ async fn submit_commit_undo_round_trip_matches_e2e_mock_shape() {
         .await
         .expect("orchestrator handle");
 
-    let (proposal, account_names, validation) = match resp {
-        MessageResponse::Proposal { proposal, account_names, validation, .. } => {
-            (proposal, account_names, validation)
-        }
+    let (proposal, account_names, validation, proactive_insights) = match resp {
+        MessageResponse::Proposal {
+            proposal,
+            account_names,
+            validation,
+            proactive_insights,
+            ..
+        } => (proposal, account_names, validation, proactive_insights),
         MessageResponse::Text { text } => panic!("expected Proposal, got Text: {text}"),
     };
+    // No prior posts → no duplicate insight expected on this turn.
+    assert!(
+        proactive_insights.is_empty(),
+        "first turn should not raise a duplicate insight, got: {proactive_insights:?}",
+    );
 
     // The shape used by `proposalResponse(...)` in e2e/fixtures/responses.ts.
     assert_eq!(proposal.lines.len(), 2);

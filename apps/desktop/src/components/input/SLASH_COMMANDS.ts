@@ -11,4 +11,5 @@ export const SLASH_COMMANDS = [
   { name: "/undo", description: "Undo the last AI-posted transaction" },
   { name: "/help", description: "Show available commands and tips" },
   { name: "/defaults", description: "View or change AI entry defaults" },
+  { name: "/sensitivity", description: "Set proactive engine sensitivity (quiet|normal|proactive)" },
 ] as const satisfies readonly SlashCommand[];

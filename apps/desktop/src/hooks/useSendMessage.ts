@@ -7,7 +7,7 @@ import type {
   TransactionDisplay,
 } from "../components/chat/TransactionCard.types";
 import { safeInvokeOrAdvise } from "../lib/safeInvoke";
-import { useChatStore } from "../stores/chatStore";
+import { useChatStore, type ProactiveInsight } from "../stores/chatStore";
 import { generateUlid } from "../utils/ulid";
 
 type MessageResponse =
@@ -18,6 +18,8 @@ type MessageResponse =
       validation: unknown;
       advisories: unknown[];
       account_names: Record<string, string>;
+      /// Optional in JSON; absent or empty when no triggers fired.
+      proactive_insights?: ProactiveInsight[];
     };
 
 export interface SendMessageDeps {
@@ -27,6 +29,7 @@ export interface SendMessageDeps {
 export function useSendMessage(deps: SendMessageDeps = {}) {
   const addUserMessage = useChatStore((state) => state.addUserMessage);
   const addLocalMessage = useChatStore((state) => state.addLocalMessage);
+  const appendInsight = useChatStore((state) => state.appendInsight);
 
   return useCallback(
     async (text: string) => {
@@ -59,8 +62,11 @@ export function useSendMessage(deps: SendMessageDeps = {}) {
         transaction: display,
         proposal: response.proposal,
       });
+      for (const insight of response.proactive_insights ?? []) {
+        appendInsight(insight);
+      }
     },
-    [addUserMessage, addLocalMessage, deps],
+    [addUserMessage, addLocalMessage, appendInsight, deps],
   );
 }
 

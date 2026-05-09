@@ -22,7 +22,9 @@ use crate::ai::prompt::PromptBuilder;
 use crate::ai::snapshot::build_snapshot;
 use crate::ai::{Message, Role};
 use crate::chat::ChatRepo;
+use crate::core::insight::{log_if_new, should_emit, ProactiveInsight, Sensitivity};
 use crate::core::proposal::TransactionProposal;
+use crate::core::triggers::duplicate as duplicate_trigger;
 use crate::core::validation::{validate_proposal, AIAdvisory, ValidationResult};
 
 const BASE_SYSTEM_PROMPT: &str = "\
@@ -64,6 +66,11 @@ pub enum MessageResponse {
         /// account_id → human-readable account name, for rendering the card
         /// without a second round-trip. Keys cover every line in the proposal.
         account_names: HashMap<String, String>,
+        /// Proactive engine insights raised by pre-commit triggers (e.g.
+        /// possible duplicate). Sensitivity-gated and deduped via
+        /// `core::insight::log_if_new`. Empty when nothing fires.
+        #[serde(default)]
+        proactive_insights: Vec<ProactiveInsight>,
     },
 }
 
@@ -113,11 +120,14 @@ impl Orchestrator {
                 let proposal = self.adapter.propose(&prompt).await?;
                 let validation = validate_proposal(&self.pool, &proposal).await;
                 let account_names = lookup_account_names(&self.pool, &proposal).await?;
+                let proactive_insights =
+                    run_pre_commit_triggers(&self.pool, household_id, &proposal, now).await;
                 Ok(MessageResponse::Proposal {
                     proposal,
                     validation,
                     advisories: Vec::new(),
                     account_names,
+                    proactive_insights,
                 })
             }
 
@@ -180,6 +190,52 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+/// Best-effort pre-commit trigger pass. Failures are logged and swallowed —
+/// the proposal must still reach the user even if a trigger query errors.
+async fn run_pre_commit_triggers(
+    pool: &SqlitePool,
+    household_id: &str,
+    proposal: &TransactionProposal,
+    now_ms: i64,
+) -> Vec<ProactiveInsight> {
+    let (sensitivity, tz) = match load_sensitivity_and_tz(pool, household_id).await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[orchestrator] failed to load sensitivity/tz: {e}");
+            return Vec::new();
+        }
+    };
+
+    let mut emitted = Vec::new();
+
+    match duplicate_trigger::check(pool, household_id, &tz, proposal).await {
+        Ok(Some(draft)) if should_emit(draft.kind, sensitivity) => {
+            match log_if_new(pool, household_id, &tz, now_ms, draft).await {
+                Ok(Some(insight)) => emitted.push(insight),
+                Ok(None) => {} // dedup'd
+                Err(e) => eprintln!("[orchestrator] insight log failed: {e}"),
+            }
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("[orchestrator] duplicate trigger failed: {e}"),
+    }
+
+    emitted
+}
+
+async fn load_sensitivity_and_tz(
+    pool: &SqlitePool,
+    household_id: &str,
+) -> Result<(Sensitivity, String), sqlx::Error> {
+    let (raw_sensitivity, tz): (String, String) =
+        sqlx::query_as("SELECT sensitivity, timezone FROM households WHERE id = ?")
+            .bind(household_id)
+            .fetch_one(pool)
+            .await?;
+    let sensitivity = Sensitivity::parse(&raw_sensitivity).unwrap_or(Sensitivity::Normal);
+    Ok((sensitivity, tz))
 }
 
 #[cfg(test)]

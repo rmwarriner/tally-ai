@@ -53,3 +53,18 @@ flow (already covered by the Rust integration test
 - No-history path: `undo_last_transaction` rejects with the standard
   Discard-flavored RecoveryError; the dispatcher swallows and renders the
   "Nothing to undo, or the last transaction cannot be reversed." message.
+
+## Proactive engine (`e2e/proactive.spec.ts`)
+
+- Morning briefing: `session_open` returning a `morning_briefing` insight
+  renders as a proactive bubble with the "Morning briefing" aria-label
+  and blue accent.
+- Envelope-over alert: `commit_proposal` returning `proactive_insights[]`
+  with an `envelope_over` payload renders the alert as a proactive bubble
+  with the "Proactive alert" aria-label and red accent.
+- `/sensitivity quiet` dispatches `set_sensitivity` and confirms via system
+  message; `/sensitivity` with no args reads the current value via
+  `get_sensitivity`.
+- Out of scope (deferred): a stress-test scenario asserting that a
+  `quiet` sensitivity actually suppresses the briefing — covered at the
+  Rust unit level (`core::insight::tests::should_emit_*`).

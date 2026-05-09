@@ -16,6 +16,16 @@
   clip-path: polygon(0% 8px, 8px 0%, 100% 0%, 100% 100%, 0% 100%);
 }
 
+.bubble.alert {
+  border-left-color: var(--color-danger, #c0392b);
+  background: rgba(192, 57, 43, 0.08);
+}
+
+.bubble.briefing {
+  border-left-color: var(--color-accent, #2563eb);
+  background: rgba(37, 99, 235, 0.08);
+}
+
 .codePill {
   display: inline-flex;
   margin-top: 8px;

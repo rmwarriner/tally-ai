@@ -138,8 +138,8 @@ describe("InputBar", () => {
     fireEvent.keyDown(textbox, { key: "ArrowUp" });
     fireEvent.keyDown(textbox, { key: "Enter" });
 
-    // Last command in SLASH_COMMANDS is /defaults.
-    expect(textbox).toHaveValue("/defaults ");
+    // Last command in SLASH_COMMANDS is /sensitivity.
+    expect(textbox).toHaveValue("/sensitivity ");
   });
 
   it("textarea grows with content and respects the max-height cap", () => {

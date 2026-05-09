@@ -30,6 +30,8 @@ function makeDeps(overrides: Partial<Parameters<typeof dispatchSlashCommand>[2]>
     undoLastTransaction: vi.fn().mockResolvedValue(undefined),
     getAIDefaults: vi.fn().mockResolvedValue({ timezone: "America/Chicago", preferred_accounts: ["Checking"] }),
     invalidateSidebar: vi.fn(),
+    getSensitivity: vi.fn().mockResolvedValue("normal"),
+    setSensitivity: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -120,6 +122,50 @@ describe("dispatchSlashCommand", () => {
     await dispatchSlashCommand("/notacommand", "", deps);
 
     expect(deps.addSystemMessage).toHaveBeenCalledWith(UNKNOWN_COMMAND_MESSAGE, "error");
+  });
+
+  it("/sensitivity with no args reads + reports the current value", async () => {
+    const deps = makeDeps({
+      getSensitivity: vi.fn().mockResolvedValue("proactive"),
+    });
+    await dispatchSlashCommand("/sensitivity", "", deps);
+
+    expect(deps.getSensitivity).toHaveBeenCalled();
+    expect(deps.addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("proactive"),
+      "info",
+    );
+  });
+
+  it("/sensitivity quiet|normal|proactive sets the value", async () => {
+    const deps = makeDeps();
+    await dispatchSlashCommand("/sensitivity", "quiet", deps);
+
+    expect(deps.setSensitivity).toHaveBeenCalledWith("quiet");
+    expect(deps.addSystemMessage).toHaveBeenCalledWith("Sensitivity set to quiet.", "info");
+  });
+
+  it("/sensitivity rejects invalid values with usage hint", async () => {
+    const deps = makeDeps();
+    await dispatchSlashCommand("/sensitivity", "loud", deps);
+
+    expect(deps.setSensitivity).not.toHaveBeenCalled();
+    expect(deps.addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("quiet|normal|proactive"),
+      "error",
+    );
+  });
+
+  it("/sensitivity surfaces an error message when set rejects", async () => {
+    const deps = makeDeps({
+      setSensitivity: vi.fn().mockRejectedValue(new Error("nope")),
+    });
+    await dispatchSlashCommand("/sensitivity", "normal", deps);
+
+    expect(deps.addSystemMessage).toHaveBeenCalledWith(
+      "Could not update sensitivity right now.",
+      "error",
+    );
   });
 });
 

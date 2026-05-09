@@ -89,7 +89,7 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 - Stub Phase 2 extension points with clear TODO(phase2) comments.
 
-## Implementation status (as of 2026-05-08)
+## Implementation status (as of 2026-05-09)
 
 **Chat surface (T-033–T-039, T-044):**
 - Chat thread: message rendering by type, date separators, auto-scroll, new-message
@@ -186,6 +186,40 @@ a chat interface. There are no forms and no edit screens — all writes go throu
   full keyboard map (#128).
 - Doc-discipline rule (T-065) added: every `feat:` PR landing ticket work
   updates this Implementation status section. See CONTRIBUTING.md.
+
+**Proactive engine (T-050–T-054):**
+- `core::insight` (T-053) is the gate + dedup layer for every proactive
+  message. `InsightKind`, `Sensitivity`, `should_emit`, `log_if_new`. Migration
+  0008 adds `insight_log` with two partial unique indexes — one for
+  entity-scoped kinds (envelope/duplicate), one for singletons (briefing).
+  `day_bucket_ms` uses household-local midnight via chrono-tz so dedup
+  respects the user's calendar day.
+- Sensitivity (T-054): migration 0009 adds `households.sensitivity` (default
+  `normal`) and `households.last_briefing_at_day`. Tauri commands
+  `get_sensitivity` / `set_sensitivity`. `/sensitivity quiet|normal|proactive`
+  slash command. Quiet blocks all kinds, normal allows alerts only,
+  proactive allows everything (including morning briefing).
+- Producers in `core::triggers`: `envelope::evaluate` (T-051) emits
+  `EnvelopeOver` (>budget) or `EnvelopeApproaching` (≥85%); `duplicate::check`
+  (T-052) emits `PossibleDuplicate` for same-household, same-day, same-memo,
+  same-amount matches; `briefing::assemble` (T-050) builds a 4-item
+  morning summary (cash on hand, top envelope, over-count, recent activity).
+- Wiring: `commit_proposal` runs envelope triggers post-commit and returns
+  `proactive_insights[]` in the `Committed` outcome. `ai::orchestrator`
+  runs the duplicate trigger pre-commit and attaches insights to the
+  `Proposal` response. New `session_open` Tauri command returns the
+  briefing (or `null`) and updates `last_briefing_at_day`.
+- Frontend: `useSessionOpen` hook fires once per mount after onboarding
+  completes. `chatStore.appendInsight` writes a proactive message; reuses
+  the backend ULID so within-session duplicates are no-ops.
+  `ProactiveMessage` gains a `category` prop (`alert` | `insight` |
+  `briefing`) with corresponding aria-label and left-border accent
+  matching spec §6.2.
+- Test surfaces: 12 unit tests in `core::insight`, 7 in `triggers::envelope`,
+  7 in `triggers::duplicate`, 2 in `triggers::briefing`. Vitest covers
+  `useSessionOpen`, `/sensitivity` dispatch, `ProactiveMessage` categories.
+  Playwright spec `proactive.spec.ts` covers briefing render, envelope-over
+  alert from commit, and `/sensitivity` flow.
 
 **Playwright E2E + /undo wiring (T-062):**
 - `apps/desktop/e2e/` holds the Playwright suite, driven by a mocked

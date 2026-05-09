@@ -36,4 +36,28 @@ describe("ProactiveMessage", () => {
 
     expect(screen.queryByText(/WARNING/)).not.toBeInTheDocument();
   });
+
+  it("renders briefing category with the briefing aria-label", () => {
+    render(
+      <ProactiveMessage id="1" text="Good morning" ts={Date.now()} category="briefing" />,
+    );
+    const note = screen.getByRole("note", { name: /morning briefing/i });
+    expect(note).toBeInTheDocument();
+    expect(note).toHaveAttribute("data-category", "briefing");
+  });
+
+  it("renders alert category with the alert aria-label", () => {
+    render(
+      <ProactiveMessage id="1" text="Over budget" ts={Date.now()} category="alert" />,
+    );
+    const note = screen.getByRole("note", { name: /proactive alert/i });
+    expect(note).toBeInTheDocument();
+    expect(note).toHaveAttribute("data-category", "alert");
+  });
+
+  it("defaults to insight category and the standard advisory aria-label", () => {
+    render(<ProactiveMessage id="1" text="Heads up" ts={Date.now()} />);
+    const note = screen.getByRole("note", { name: /proactive advisory/i });
+    expect(note).toHaveAttribute("data-category", "insight");
+  });
 });

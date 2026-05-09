@@ -40,6 +40,9 @@ pub fn run() {
             commands::commit_gnucash_import,
             commands::rollback_gnucash_import,
             commands::reconcile_gnucash_import,
+            commands::get_sensitivity,
+            commands::set_sensitivity,
+            commands::session_open,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
