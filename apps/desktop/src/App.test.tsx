@@ -13,6 +13,12 @@ vi.mock("@tauri-apps/api/core", () => ({
     if (cmd === "list_chat_messages") {
       return [];
     }
+    // session_open is fired by the App-mount useSessionOpen hook; null
+    // means "no briefing today" (gated/dedup'd) and is the safe default
+    // for tests that don't care about the briefing path.
+    if (cmd === "session_open") {
+      return null;
+    }
     return true;
   }),
 }));

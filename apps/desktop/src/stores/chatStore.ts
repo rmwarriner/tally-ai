@@ -28,6 +28,22 @@ interface ChatStore {
   // (e.g. safeInvoke's defaultDispatch) keep type-checking via optional
   // chaining; the implementation below always supplies it.
   appendAdvisory?: (err: RecoveryError) => void;
+  /// Wire-shape from `core::insight::ProactiveInsight`. Backs the proactive
+  /// engine producers (envelope alerts, possible duplicate, morning briefing).
+  appendInsight: (insight: ProactiveInsight) => void;
+}
+
+/// Mirrors `core::insight::ProactiveInsight` (snake_case JSON via serde).
+export interface ProactiveInsight {
+  id: string;
+  kind:
+    | "envelope_over"
+    | "envelope_approaching"
+    | "possible_duplicate"
+    | "morning_briefing";
+  category: "alert" | "insight" | "briefing";
+  user_message: string;
+  created_at: number;
 }
 
 function makeBaseMessage<K extends ChatMessage["kind"]>(kind: K): { kind: K; id: string; ts: number } {
@@ -120,5 +136,21 @@ export const useChatStore = create<ChatStore>((set) => ({
       recovery: [...err.recovery],
     };
     set((state) => ({ localMessages: [...state.localMessages, message] }));
+  },
+  appendInsight: (insight) => {
+    const message: ChatMessage = {
+      // Reuse the backend ULID so the persistence layer can dedup if a
+      // single insight ever reaches us twice within a session.
+      kind: "proactive",
+      id: insight.id,
+      ts: insight.created_at,
+      text: insight.user_message,
+      category: insight.category,
+    };
+    set((state) =>
+      state.localMessages.some((m) => m.id === insight.id)
+        ? state
+        : { localMessages: [...state.localMessages, message] },
+    );
   },
 }));

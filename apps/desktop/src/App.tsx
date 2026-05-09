@@ -4,6 +4,7 @@ import { ChatThread } from "./components/chat/ChatThread";
 import { InputBar } from "./components/input/InputBar";
 import { useChatPersistence } from "./hooks/useChatPersistence";
 import { useSendMessage } from "./hooks/useSendMessage";
+import { useSessionOpen } from "./hooks/useSessionOpen";
 import { useSlashDispatch } from "./hooks/useSlashDispatch";
 import { useOnboardingEngine } from "./hooks/useOnboardingEngine";
 import { HealthSidebar } from "./components/sidebar/HealthSidebar";
@@ -17,6 +18,7 @@ export default function App() {
   const dispatchSlash = useSlashDispatch();
   const onboarding = useOnboardingEngine();
   useChatPersistence();
+  useSessionOpen();
 
   const onSend = useCallback(
     (text: string) => {

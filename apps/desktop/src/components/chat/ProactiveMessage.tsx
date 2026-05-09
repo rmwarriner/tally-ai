@@ -9,13 +9,31 @@ interface ProactiveMessageProps {
   ts: number;
   advisory_code?: string;
   recovery?: RecoveryAction[];
+  category?: "alert" | "insight" | "briefing";
 }
 
-export function ProactiveMessage({ text, advisory_code, recovery }: ProactiveMessageProps) {
+export function ProactiveMessage({
+  text,
+  advisory_code,
+  recovery,
+  category = "insight",
+}: ProactiveMessageProps) {
+  const bubbleClass =
+    category === "alert"
+      ? `${styles.bubble} ${styles.alert}`
+      : category === "briefing"
+        ? `${styles.bubble} ${styles.briefing}`
+        : styles.bubble;
+  const ariaLabel =
+    category === "briefing"
+      ? "Morning briefing"
+      : category === "alert"
+        ? "Proactive alert"
+        : "Proactive advisory";
   return (
     <div className={styles.row}>
       <AIAvatar variant="proactive" />
-      <div className={styles.bubble} role="note" aria-label="Proactive advisory">
+      <div className={bubbleClass} role="note" aria-label={ariaLabel} data-category={category}>
         <div>{text}</div>
         {advisory_code ? <span className={styles.codePill}>{advisory_code}</span> : null}
         {recovery && recovery.length > 0 ? (

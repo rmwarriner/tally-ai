@@ -3,11 +3,16 @@ import { useCallback } from "react";
 
 import type { TransactionProposal } from "../components/chat/chatTypes";
 import { safeInvoke } from "../lib/safeInvoke";
-import { useChatStore } from "../stores/chatStore";
+import { useChatStore, type ProactiveInsight } from "../stores/chatStore";
 import { useInvalidateSidebar } from "./useInvalidateSidebar";
 
 type CommitOutcome =
-  | { status: "committed"; txn_id: string }
+  | {
+      status: "committed";
+      txn_id: string;
+      /// Optional in JSON; absent or empty when no triggers fired.
+      proactive_insights?: ProactiveInsight[];
+    }
   | { status: "rejected"; validation: unknown };
 
 export interface CommitProposalDeps {
@@ -21,6 +26,7 @@ export function useCommitProposal(deps: CommitProposalDeps = {}) {
   const updateMessage = useChatStore((s) => s.updateMessage);
   const removeMessage = useChatStore((s) => s.removeMessage);
   const addSystemMessage = useChatStore((s) => s.addSystemMessage);
+  const appendInsight = useChatStore((s) => s.appendInsight);
   const invalidateSidebar = useInvalidateSidebar();
 
   const commit = useCallback(
@@ -48,6 +54,9 @@ export function useCommitProposal(deps: CommitProposalDeps = {}) {
           transaction_id: outcome.txn_id,
         });
         void invalidateSidebar();
+        for (const insight of outcome.proactive_insights ?? []) {
+          appendInsight(insight);
+        }
         return;
       }
 
@@ -56,7 +65,7 @@ export function useCommitProposal(deps: CommitProposalDeps = {}) {
       updateMessage(messageId, { commit_error: summary });
       addSystemMessage(summary, "error");
     },
-    [addSystemMessage, deps, invalidateSidebar, updateMessage],
+    [addSystemMessage, appendInsight, deps, invalidateSidebar, updateMessage],
   );
 
   const discard = useCallback(

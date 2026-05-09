@@ -15,8 +15,11 @@ use crate::ai::orchestrator::{MessageResponse, Orchestrator};
 use crate::chat::{ChatMessageRow, ChatRepo};
 use crate::core::coa::seed_chart_of_accounts;
 use crate::core::correction::{undo_last_transaction as core_undo, CorrectionError};
+use crate::core::insight::{day_bucket_ms, log_if_new, should_emit, InsightKind, ProactiveInsight, Sensitivity};
 use crate::core::ledger::{commit_proposal as ledger_commit, LedgerError};
 use crate::core::proposal::TransactionProposal;
+use crate::core::triggers::briefing as briefing_trigger;
+use crate::core::triggers::envelope as envelope_triggers;
 use crate::core::validation::ValidationResult;
 use crate::db::create_encrypted_db;
 use crate::error::{NonEmpty, RecoveryAction, RecoveryError, RecoveryKind};
@@ -480,6 +483,84 @@ fn map_undo_error(err: CorrectionError) -> RecoveryError {
     }
 }
 
+/// Returns the household's current proactive-engine sensitivity setting.
+/// One of `quiet | normal | proactive`.
+#[tauri::command]
+pub async fn get_sensitivity(state: State<'_, AppState>) -> Result<String, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
+
+    let (raw,): (String,) =
+        sqlx::query_as("SELECT sensitivity FROM households WHERE id = ?")
+            .bind(&household_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| RecoveryError::show_help(e.to_string()))?;
+
+    // Normalize through Sensitivity::parse so callers always see a valid value.
+    let sensitivity = Sensitivity::parse(&raw).unwrap_or(Sensitivity::Normal);
+    Ok(sensitivity.as_str().to_string())
+}
+
+#[derive(Deserialize)]
+pub struct SetSensitivityArgs {
+    pub sensitivity: String,
+}
+
+/// Sets the household's sensitivity. Rejects unknown values with a plain
+/// EditField recovery so the UI can re-prompt.
+#[tauri::command]
+pub async fn set_sensitivity(
+    state: State<'_, AppState>,
+    args: SetSensitivityArgs,
+) -> Result<(), RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
+
+    let sensitivity = Sensitivity::parse(&args.sensitivity).ok_or_else(|| {
+        RecoveryError::new(
+            "Sensitivity must be one of: quiet, normal, proactive.".to_string(),
+            crate::error::NonEmpty::new(
+                RecoveryAction {
+                    kind: RecoveryKind::EditField,
+                    label: "Try again".to_string(),
+                    is_primary: true,
+                },
+                vec![],
+            ),
+        )
+    })?;
+
+    sqlx::query("UPDATE households SET sensitivity = ? WHERE id = ?")
+        .bind(sensitivity.as_str())
+        .bind(&household_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
+
+    Ok(())
+}
+
 #[derive(Deserialize)]
 pub struct AppendChatMessageArgs {
     pub id: String,
@@ -618,9 +699,17 @@ pub struct CommitProposalArgs {
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CommitOutcome {
-    Committed { txn_id: String },
+    Committed {
+        txn_id: String,
+        /// Proactive insights produced by post-commit triggers (e.g. envelope
+        /// over budget). The UI renders each as a proactive chat message.
+        /// Always present; empty if no triggers fired or sensitivity blocked.
+        proactive_insights: Vec<ProactiveInsight>,
+    },
     /// Validation rejected the proposal. The UI surfaces the errors from `validation`.
-    Rejected { validation: ValidationResult },
+    Rejected {
+        validation: ValidationResult,
+    },
 }
 
 /// Validates the proposal and, if accepted, writes transaction + journal_lines.
@@ -645,7 +734,13 @@ pub async fn commit_proposal(
         .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
 
     match ledger_commit(&pool, &household_id, &args.proposal).await {
-        Ok(txn_id) => Ok(CommitOutcome::Committed { txn_id }),
+        Ok(txn_id) => {
+            let proactive_insights = run_post_commit_triggers(&pool, &household_id).await;
+            Ok(CommitOutcome::Committed {
+                txn_id,
+                proactive_insights,
+            })
+        }
         Err(LedgerError::ValidationFailed(result)) => {
             Ok(CommitOutcome::Rejected { validation: result })
         }
@@ -658,6 +753,135 @@ pub async fn commit_proposal(
             ))
         }
     }
+}
+
+/// Runs every post-commit trigger and persists the surviving (sensitivity-
+/// gated, deduped) insights. Failures are logged but never surfaced to the
+/// user — a proactive insight is best-effort, not load-bearing.
+async fn run_post_commit_triggers(
+    pool: &sqlx::SqlitePool,
+    household_id: &str,
+) -> Vec<ProactiveInsight> {
+    let now = now_ms();
+    let (sensitivity, tz) = match load_sensitivity_and_tz(pool, household_id).await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[triggers] failed to load sensitivity/tz: {e}");
+            return Vec::new();
+        }
+    };
+
+    let drafts = match envelope_triggers::evaluate(pool, household_id, now).await {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("[triggers] envelope evaluator failed: {e}");
+            return Vec::new();
+        }
+    };
+
+    let mut emitted = Vec::with_capacity(drafts.len());
+    for draft in drafts {
+        if !should_emit(draft.kind, sensitivity) {
+            continue;
+        }
+        match log_if_new(pool, household_id, &tz, now, draft).await {
+            Ok(Some(insight)) => emitted.push(insight),
+            Ok(None) => {} // dedup'd — fine
+            Err(e) => eprintln!("[triggers] insight log failed: {e}"),
+        }
+    }
+    emitted
+}
+
+async fn load_sensitivity_and_tz(
+    pool: &sqlx::SqlitePool,
+    household_id: &str,
+) -> Result<(Sensitivity, String), sqlx::Error> {
+    let (raw_sensitivity, tz): (String, String) =
+        sqlx::query_as("SELECT sensitivity, timezone FROM households WHERE id = ?")
+            .bind(household_id)
+            .fetch_one(pool)
+            .await?;
+    let sensitivity = Sensitivity::parse(&raw_sensitivity).unwrap_or(Sensitivity::Normal);
+    Ok((sensitivity, tz))
+}
+
+/// Called once on App mount. Returns the morning briefing if (a) sensitivity
+/// is `proactive`, (b) the local-day bucket exceeds `households.last_briefing_at_day`,
+/// and (c) the singleton dedup hasn't already logged one. Otherwise returns
+/// `null`. Best-effort: query failures yield `null`, never an error.
+#[tauri::command]
+pub async fn session_open(
+    state: State<'_, AppState>,
+) -> Result<Option<ProactiveInsight>, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
+
+    let now = now_ms();
+    let (sensitivity, tz) = match load_sensitivity_and_tz(&pool, &household_id).await {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+
+    if !should_emit(InsightKind::MorningBriefing, sensitivity) {
+        return Ok(None);
+    }
+
+    let today_bucket = match day_bucket_ms(&tz, now) {
+        Ok(b) => b,
+        Err(_) => return Ok(None),
+    };
+
+    let last_seen: Option<(Option<i64>,)> =
+        sqlx::query_as("SELECT last_briefing_at_day FROM households WHERE id = ?")
+            .bind(&household_id)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten();
+    if let Some((Some(last),)) = last_seen {
+        if last >= today_bucket {
+            return Ok(None);
+        }
+    }
+
+    let draft = match briefing_trigger::assemble(&pool, &household_id, now).await {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("[session_open] briefing assemble failed: {e}");
+            return Ok(None);
+        }
+    };
+
+    let insight = match log_if_new(&pool, &household_id, &tz, now, draft).await {
+        Ok(Some(i)) => i,
+        Ok(None) => return Ok(None), // already logged today
+        Err(e) => {
+            eprintln!("[session_open] insight log failed: {e}");
+            return Ok(None);
+        }
+    };
+
+    // Best-effort: even if this update fails, dedup still works via the
+    // singleton partial index — the field is a fast-path early-out for the
+    // common case.
+    let _ = sqlx::query("UPDATE households SET last_briefing_at_day = ? WHERE id = ?")
+        .bind(today_bucket)
+        .bind(&household_id)
+        .execute(&pool)
+        .await;
+
+    Ok(Some(insight))
 }
 
 // ── Secret management (Claude API key) ────────────────────────────────────────

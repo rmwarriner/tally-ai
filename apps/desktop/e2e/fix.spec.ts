@@ -21,8 +21,8 @@ test.describe("/fix command", () => {
     const input = page.getByLabel("Chat input");
     await input.fill("/");
     await expect(page.getByRole("listbox", { name: "Slash commands" })).toBeVisible();
-    // All seven commands are visible at first.
-    await expect(page.getByRole("option")).toHaveCount(7);
+    // All commands are visible at first (count tracks SLASH_COMMANDS).
+    await expect(page.getByRole("option")).toHaveCount(8);
 
     await input.fill("/f");
     // /fix is the only match starting with "f".

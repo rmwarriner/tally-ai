@@ -7,13 +7,14 @@ import { useSendMessage } from "./useSendMessage";
 
 const UNKNOWN_COMMAND_MESSAGE = "Unknown command. Type /help to see available commands.";
 const HELP_ARTIFACT_CONTENT = [
-  "/budget    — Show envelope budget status for the current month",
-  "/balance   — Show account balances",
-  "/recent    — List recent transactions (add a number: /recent 20)",
-  '/fix       — Correct a transaction: /fix "groceries on Tuesday was $45"',
-  "/undo      — Undo the last AI-posted transaction",
-  "/help      — Show this list",
-  "/defaults  — View AI entry defaults (timezone, accounts)",
+  "/budget       — Show envelope budget status for the current month",
+  "/balance      — Show account balances",
+  "/recent       — List recent transactions (add a number: /recent 20)",
+  '/fix          — Correct a transaction: /fix "groceries on Tuesday was $45"',
+  "/undo         — Undo the last AI-posted transaction",
+  "/help         — Show this list",
+  "/defaults     — View AI entry defaults (timezone, accounts)",
+  "/sensitivity  — Set proactive engine sensitivity (quiet|normal|proactive)",
 ].join("\n");
 
 type SystemTone = "info" | "error";
@@ -25,7 +26,12 @@ interface SlashDispatchDeps {
   undoLastTransaction: () => Promise<void>;
   getAIDefaults: () => Promise<Record<string, unknown>>;
   invalidateSidebar: () => void | Promise<void>;
+  getSensitivity: () => Promise<string>;
+  setSensitivity: (value: string) => Promise<void>;
 }
+
+const SENSITIVITY_USAGE =
+  'Usage: /sensitivity quiet|normal|proactive (or /sensitivity to view current).';
 
 function parseRecentCount(args: string): number {
   const parsed = Number.parseInt(args.trim(), 10);
@@ -95,6 +101,9 @@ export async function dispatchSlashCommand(
         deps.addSystemMessage("Could not load AI defaults right now.", "error");
       }
       return;
+    case "/sensitivity":
+      await handleSensitivity(args, deps);
+      return;
     default:
       deps.addSystemMessage(UNKNOWN_COMMAND_MESSAGE, "error");
   }
@@ -104,6 +113,31 @@ function parseRawSlash(raw: string): { command: string; args: string } {
   const trimmed = raw.trim();
   const [command = "", ...argParts] = trimmed.split(/\s+/);
   return { command, args: argParts.join(" ") };
+}
+
+const SENSITIVITY_VALUES = new Set(["quiet", "normal", "proactive"]);
+
+async function handleSensitivity(args: string, deps: SlashDispatchDeps): Promise<void> {
+  const value = args.trim().toLowerCase();
+  if (value.length === 0) {
+    try {
+      const current = await deps.getSensitivity();
+      deps.addSystemMessage(`Sensitivity is set to ${current}. ${SENSITIVITY_USAGE}`, "info");
+    } catch {
+      deps.addSystemMessage("Could not read sensitivity right now.", "error");
+    }
+    return;
+  }
+  if (!SENSITIVITY_VALUES.has(value)) {
+    deps.addSystemMessage(SENSITIVITY_USAGE, "error");
+    return;
+  }
+  try {
+    await deps.setSensitivity(value);
+    deps.addSystemMessage(`Sensitivity set to ${value}.`, "info");
+  } catch {
+    deps.addSystemMessage("Could not update sensitivity right now.", "error");
+  }
 }
 
 export function useSlashDispatch() {
@@ -128,6 +162,17 @@ export function useSlashDispatch() {
           const r = await safeInvoke<Record<string, unknown>>("get_ai_defaults");
           if (!r.ok) throw r.error;
           return r.value;
+        },
+        getSensitivity: async () => {
+          const r = await safeInvoke<string>("get_sensitivity");
+          if (!r.ok) throw r.error;
+          return r.value;
+        },
+        setSensitivity: async (value: string) => {
+          const r = await safeInvoke<void>("set_sensitivity", {
+            args: { sensitivity: value },
+          });
+          if (!r.ok) throw r.error;
         },
       });
     },

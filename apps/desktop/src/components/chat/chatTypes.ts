@@ -32,6 +32,9 @@ export type ChatMessage =
       /// Optional recovery actions surfaced when this proactive message
       /// originated from a `RecoveryError` (e.g. via `appendAdvisory`).
       recovery?: RecoveryAction[];
+      /// Spec §6.2 left-border accent: alert (red), insight (amber),
+      /// briefing (blue). Defaults to insight when omitted.
+      category?: "alert" | "insight" | "briefing";
     }
   | { kind: "system"; id: string; ts: number; text: string; tone?: "info" | "error" }
   | {

@@ -71,7 +71,32 @@ export const existingHouseholdResponses: MockResponses = {
   get_pending_transactions: [],
   has_api_key: true,
   append_chat_message: null,
+  // Default: no morning briefing on session open. Specs that exercise the
+  // briefing override this key.
+  session_open: null,
+  get_sensitivity: "normal",
+  set_sensitivity: null,
 };
+
+export function morningBriefingResponse() {
+  return {
+    id: "01BRIEFING0000000000000000",
+    kind: "morning_briefing",
+    category: "briefing",
+    user_message: "Good morning! Cash on hand: $1,500.00.",
+    created_at: 1_716_000_000_000,
+  };
+}
+
+export function envelopeOverInsight(name = "Groceries", overByCents = 1_000) {
+  return {
+    id: "01ENVOVER000000000000000000",
+    kind: "envelope_over",
+    category: "alert",
+    user_message: `${name} is over budget by $${(overByCents / 100).toFixed(2)}.`,
+    created_at: 1_716_000_000_000,
+  };
+}
 
 export function proposalResponse(memo: string, amountCents: number, accountId = "01CHK") {
   return {
