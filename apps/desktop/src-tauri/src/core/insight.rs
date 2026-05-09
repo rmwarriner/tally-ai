@@ -297,7 +297,7 @@ mod tests {
         let (pool, hh) = test_pool().await;
         let now = 1_716_000_000_000;
         let a = log_if_new(&pool, &hh, "America/Chicago", now, draft(InsightKind::MorningBriefing, None, "morning a")).await.unwrap();
-        let b = log_if_new(&pool, &hh, "America/Chicago", now + 3600_000, draft(InsightKind::MorningBriefing, None, "morning b")).await.unwrap();
+        let b = log_if_new(&pool, &hh, "America/Chicago", now + 3_600_000, draft(InsightKind::MorningBriefing, None, "morning b")).await.unwrap();
         assert!(a.is_some());
         assert!(b.is_none(), "morning briefing must be once per day");
     }
