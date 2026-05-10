@@ -169,6 +169,43 @@ describe("useCommitProposal", () => {
     expect(messages.some((m) => m.kind === "system" && m.tone === "error")).toBe(true);
   });
 
+  it("rejection produces both card-local error AND a system message carrying the same text (#124)", async () => {
+    // Tighter than "surfaces the validation error on a rejected outcome":
+    // asserts the user-facing text on both side effects is the same string,
+    // so a refactor that breaks the propagation on either path fails loud.
+    seedPendingMessage("msg_1", sampleProposal());
+    const userMessage = "That account doesn't exist anymore.";
+    const invoke = vi.fn(async () => ({
+      status: "rejected",
+      validation: {
+        status: "REJECTED",
+        errors: [{ code: "UNKNOWN_ACCOUNT", user_message: userMessage }],
+      },
+    }));
+    const { wrapper } = makeWrapper();
+
+    const { result } = renderHook(() => useCommitProposal({ invoke: invoke as never }), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.commit("msg_1", sampleProposal());
+    });
+
+    const messages = useChatStore.getState().localMessages;
+    const txn = messages.find((m) => m.kind === "transaction") as Extract<
+      ChatMessage,
+      { kind: "transaction" }
+    >;
+    const sys = messages.find((m) => m.kind === "system") as Extract<
+      ChatMessage,
+      { kind: "system" }
+    >;
+
+    expect(txn.commit_error).toBe(userMessage);
+    expect(sys.tone).toBe("error");
+    expect(sys.text).toBe(userMessage);
+  });
+
   it("discard removes the message from the store", () => {
     seedPendingMessage("msg_1", sampleProposal());
     const invoke = vi.fn();

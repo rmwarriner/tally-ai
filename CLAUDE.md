@@ -148,11 +148,11 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 **Validation behavior matrix (T-060):**
 - `core::validation_matrix` is the canonical inventory of validation behaviors.
-  Tier 1 (8 HardError variants), Tier 2 (5 SoftWarning variants), Tier 3
-  (4 AIAdvisory builders). Every variant has +/- tests asserting the recovery
-  action set against actual code. New rules MUST add a row to this matrix.
-- Two follow-ups filed: `EnvelopeMismatch` unimplemented (#113);
-  `PossibleDuplicate` rule scoping (#114).
+  Tier 1 (8 HardError variants, all implemented as of Phase 2 Tier 2),
+  Tier 2 (4 SoftWarning variants — `PossibleDuplicate` removed in #114),
+  Tier 3 (4 AIAdvisory builders). Every variant has +/- tests asserting the
+  recovery action set against actual code. New rules MUST add a row to this
+  matrix.
 
 **safeInvoke + ErrorBoundary (T-064):**
 - `apps/desktop/src/lib/safeInvoke.ts` is the single surface translating
@@ -264,6 +264,23 @@ a chat interface. There are no forms and no edit screens — all writes go throu
   are cached by `apps/desktop/package.json` hash.
 - E2E coverage rules live in `apps/desktop/e2e/MATRIX.md` — same discipline
   as the React component MATRIX.
+
+**Phase 2 Tier 2 — validation polish (#113, #114, #124):**
+- `EnvelopeMismatch` HardError (#113) ships in `core::validation::check_envelope_mismatch`.
+  Rejects proposals where a journal_line tags an envelope_id whose
+  `envelopes.account_id` doesn't match the line's `account_id`. Treats
+  unknown envelope_id as a mismatch. Recovery: `EditField` ("Change envelope")
+  primary, `Discard` extra. Matrix entry rewritten with 4 tests
+  (triggers, clean baseline, matches-account passes, unknown_envelope
+  triggers).
+- `PossibleDuplicate` SoftWarning removed (#114). Duplicate detection
+  lives entirely in the Tier-3 trigger `core::triggers::duplicate` (T-052)
+  with tighter scoping (household + memo + day + amount). Matrix slot
+  removed; the unused `seed_posted_txn` test helper went with it.
+- New focused vitest #124 in `useCommitProposal.test.tsx`: asserts the
+  rejection path produces both the card-local `commit_error` AND a system
+  message carrying the **same** user-facing text — refactor that breaks
+  either side now fails loud.
 
 **Phase 2 Tier 1 — security hardening (#142, #143):**
 - CSPRNG (#142): `commands::create_household` now uses
