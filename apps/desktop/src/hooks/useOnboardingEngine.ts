@@ -75,6 +75,20 @@ function isValidAccountName(name: string): boolean {
   return trimmed.length > 2 && !/^(a|an|the)$/i.test(trimmed);
 }
 
+/// Extracts a user-facing message from anything thrown by `invokeOrThrow`.
+/// `safeInvoke` normalizes Tauri command failures to a `RecoveryError`
+/// shape (`.message: string`); other throws fall back to `Error.message`
+/// or String coercion. Centralized so every onboarding catch site shares
+/// the same extraction.
+function errorDetail(err: unknown): string {
+  if (typeof err === "object" && err !== null && "message" in err) {
+    const msg = (err as { message: unknown }).message;
+    if (typeof msg === "string") return msg;
+  }
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 function parseMappingEdit(text: string): MappingEdit | null {
   const changeType = text.match(/make\s+(\S+(?:\s+\S+)*?)\s+(?:an?\s+)?(asset|liability|income|expense|equity)\b/i);
   if (changeType) {
@@ -163,11 +177,23 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
           );
           return;
         }
-        const id = await invokeOrThrow<string>(deps.invoke, "create_household", {
-          name: householdName,
-          timezone,
-          passphrase,
-        });
+        let id: string;
+        try {
+          id = await invokeOrThrow<string>(deps.invoke, "create_household", {
+            name: householdName,
+            timezone,
+            passphrase,
+          });
+        } catch (err) {
+          // #150: previously swallowed silently. Surface the backend message
+          // and keep the user on confirm_passphrase so they can retry or
+          // back up to the passphrase step manually.
+          deps.addSystemMessage(
+            `Couldn't create the household: ${errorDetail(err)}. Try again or restart the app.`,
+            "error",
+          );
+          return;
+        }
         void deps.invalidateSidebar();
         store.getState().patchDraft({ passphrase: "" }); // clear from memory after use
         deps.addSetupCard(
@@ -209,15 +235,40 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
         updatedAccounts[idx] = { ...account, balanceCents: amountCents };
         currentState.patchDraft({ accounts: updatedAccounts });
 
-        const accountId = await invokeOrThrow<string>(deps.invoke, "create_account", {
-          name: account.name,
-          account_type: account.type,
-        });
+        let accountId: string;
+        try {
+          accountId = await invokeOrThrow<string>(deps.invoke, "create_account", {
+            name: account.name,
+            account_type: account.type,
+          });
+        } catch (err) {
+          // #150: stay on account_balance so the user can retry the same
+          // account+amount without re-typing the name.
+          deps.addSystemMessage(
+            `Couldn't create that account: ${errorDetail(err)}. Try again.`,
+            "error",
+          );
+          return;
+        }
         void deps.invalidateSidebar();
-        await invokeOrThrow<void>(deps.invoke, "set_opening_balance", {
-          account_id: accountId,
-          amount_cents: amountCents,
-        });
+        try {
+          await invokeOrThrow<void>(deps.invoke, "set_opening_balance", {
+            account_id: accountId,
+            amount_cents: amountCents,
+          });
+        } catch (err) {
+          // #150: account already exists at this point — the user retrying
+          // with the same name would collide. Advance past balance to
+          // more_accounts so they can move on or fix later via /defaults.
+          deps.addSystemMessage(
+            `Account "${account.name}" was created but its opening balance failed: ${errorDetail(err)}. You can set it later.`,
+            "error",
+          );
+          currentState.advanceAccountIndex();
+          store.getState().setFreshStep("more_accounts");
+          deps.addSystemMessage("Do you have another account to add? (yes / no)", "info");
+          return;
+        }
         void deps.invalidateSidebar();
 
         deps.addSetupCard(
@@ -259,7 +310,17 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
       case "envelopes": {
         const name = input.trim();
         store.getState().addDraftEnvelope({ name });
-        await invokeOrThrow<void>(deps.invoke, "create_envelope", { name });
+        try {
+          await invokeOrThrow<void>(deps.invoke, "create_envelope", { name });
+        } catch (err) {
+          // #150: keep the user on envelopes so they can retry with a
+          // different name without restarting.
+          deps.addSystemMessage(
+            `Couldn't create that envelope: ${errorDetail(err)}. Try a different name.`,
+            "error",
+          );
+          return;
+        }
         void deps.invalidateSidebar();
         deps.addSetupCard("envelope_created", `${name} envelope created`, "Budget category added");
         store.getState().setFreshStep("more_envelopes");
@@ -297,17 +358,8 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
               "Stored securely in your OS keychain",
             );
           } catch (err) {
-            // `invokeOrThrow` throws the normalized RecoveryError, which
-            // always has a `.message` string. Fall back to Error/String for
-            // any non-RecoveryError throws callers might wire up.
-            const detail =
-              typeof err === "object" && err !== null && "message" in err && typeof (err as { message: unknown }).message === "string"
-                ? (err as { message: string }).message
-                : err instanceof Error
-                  ? err.message
-                  : String(err);
             deps.addSystemMessage(
-              `Couldn't save that key: ${detail}. Try again or say "skip".`,
+              `Couldn't save that key: ${errorDetail(err)}. Try again or say "skip".`,
               "error",
             );
             return;

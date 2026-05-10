@@ -240,6 +240,25 @@ describe("fresh start — confirm passphrase step", () => {
       "info",
     );
   });
+
+  // #150: prior behavior swallowed errors silently; the user hit Enter and
+  // saw no UI response. This test pins down that a backend failure surfaces
+  // a system message AND leaves the user on confirm_passphrase to retry.
+  it("surfaces an error system message when create_household fails", async () => {
+    mockInvoke.mockRejectedValue({
+      message: "Could not open the database: SQLCipher init failed",
+      recovery: [{ kind: "SHOW_HELP", label: "Get help", is_primary: true }],
+    });
+    const addSystemMessage = vi.fn();
+    const handler = buildOnboardingHandler(makeDeps({ addSystemMessage }));
+    await handler.handleInput("my-secret-phrase");
+
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Could not open the database"),
+      "error",
+    );
+    expect(useOnboardingStore.getState().freshStep).toBe("confirm_passphrase");
+  });
 });
 
 describe("fresh start — accounts step", () => {
