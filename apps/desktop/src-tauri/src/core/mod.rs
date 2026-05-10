@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod coa;
 pub mod correction;
 pub mod envelope;

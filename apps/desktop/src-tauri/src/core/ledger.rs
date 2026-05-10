@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sqlx::SqlitePool;
 use thiserror::Error;
 
+use crate::core::audit::{self, AuditAction};
 use crate::core::proposal::{ProposedLine, Side, TransactionProposal};
 use crate::core::validation::{validate_proposal, ValidationResult};
 use crate::id::new_ulid;
@@ -88,6 +89,19 @@ pub async fn commit_proposal(
         .execute(&mut *tx)
         .await?;
     }
+
+    // #143: audit row in the same SQL transaction. A ledger row without an
+    // audit entry is a compliance gap; both halves must commit together.
+    audit::write(
+        &mut tx,
+        household_id,
+        "transactions",
+        &txn_id,
+        AuditAction::Insert,
+        proposal,
+        now,
+    )
+    .await?;
 
     tx.commit().await?;
 
@@ -190,6 +204,18 @@ pub async fn create_opening_balance(
         .execute(&mut *tx)
         .await?;
     }
+
+    // #143: audit the opening-balance insert.
+    audit::write(
+        &mut tx,
+        household_id,
+        "transactions",
+        &txn_id,
+        AuditAction::Insert,
+        &proposal,
+        now,
+    )
+    .await?;
 
     tx.commit().await?;
 

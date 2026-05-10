@@ -1,5 +1,6 @@
-use std::path::{Path, PathBuf};
 use std::io;
+use std::path::{Path, PathBuf};
+
 use super::SALT_SIZE;
 
 fn salt_path(db_path: &Path) -> PathBuf {
@@ -93,4 +94,5 @@ mod tests {
         let loaded = load_salt(&db_path).expect("Should load salt");
         assert_eq!(loaded, salt2, "Should load the most recently saved salt");
     }
+
 }

@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sqlx::SqlitePool;
 use thiserror::Error;
 
+use crate::core::audit::{self, AuditAction};
 use crate::core::proposal::TransactionProposal;
 use crate::core::validation::{validate_proposal, ValidationResult};
 use crate::id::new_ulid;
@@ -99,6 +100,38 @@ async fn void_and_reverse(
         .await?;
     }
 
+    // #143: audit both halves of the void/reverse pair atomically.
+    audit::write(
+        tx,
+        household_id,
+        "transactions",
+        &original.id,
+        AuditAction::Update,
+        &serde_json::json!({ "status": "void", "reason": "undo" }),
+        now,
+    )
+    .await?;
+    audit::write(
+        tx,
+        household_id,
+        "transactions",
+        &reversal_id,
+        AuditAction::Insert,
+        &serde_json::json!({
+            "memo": "Reversal",
+            "corrects_txn_id": original.id,
+            "txn_date_ms": null,
+            "lines": lines.iter().map(|l| serde_json::json!({
+                "account_id": l.account_id,
+                "envelope_id": l.envelope_id,
+                "amount_cents": l.amount,
+                "side": flip_side(&l.side),
+            })).collect::<Vec<_>>(),
+        }),
+        now,
+    )
+    .await?;
+
     Ok(reversal_id)
 }
 
@@ -187,6 +220,19 @@ pub async fn correct_transaction(
         .execute(&mut *tx)
         .await?;
     }
+
+    // #143: audit the replacement insert (the void+reversal pair was
+    // already audited inside void_and_reverse).
+    audit::write(
+        &mut tx,
+        household_id,
+        "transactions",
+        &replacement_id,
+        AuditAction::Insert,
+        replacement,
+        now,
+    )
+    .await?;
 
     tx.commit().await?;
 

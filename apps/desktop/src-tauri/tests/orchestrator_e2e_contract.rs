@@ -166,6 +166,19 @@ async fn submit_commit_undo_round_trip_matches_e2e_mock_shape() {
         .unwrap();
     assert_eq!(status, "posted");
 
+    // #143: commit_proposal must produce one audit row, atomic with the
+    // ledger write. Payload is the full TransactionProposal JSON.
+    let (audit_action, audit_payload): (String, String) = sqlx::query_as(
+        "SELECT action, payload FROM audit_log WHERE row_id = ?",
+    )
+    .bind(&txn_id)
+    .fetch_one(&pool)
+    .await
+    .expect("audit row should exist for committed txn");
+    assert_eq!(audit_action, "insert");
+    assert!(audit_payload.contains("Coffee"), "payload missing memo: {audit_payload}");
+    assert!(audit_payload.contains("acc_grc"), "payload missing line account: {audit_payload}");
+
     // 2a) T-069: stamping the row with AiUsage round-trips into the new
     // ai_input_tokens / ai_output_tokens / ai_cache_hit columns. Drives
     // the same helper the Tauri commit_proposal wrapper calls.
@@ -215,6 +228,27 @@ async fn submit_commit_undo_round_trip_matches_e2e_mock_shape() {
     let sides: Vec<&str> = line_sides.iter().map(|(s,)| s.as_str()).collect();
     assert!(sides.contains(&"credit"));
     assert!(sides.contains(&"debit"));
+
+    // #143: undo must produce two audit rows — an `update` for the void
+    // and an `insert` for the reversal. Both inside the same SQL txn as
+    // the data writes.
+    let (void_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM audit_log WHERE row_id = ? AND action = 'update'",
+    )
+    .bind(&txn_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(void_count, 1, "expected void audit row for {txn_id}");
+
+    let (reversal_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM audit_log WHERE row_id = ? AND action = 'insert'",
+    )
+    .bind(&reversal_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(reversal_count, 1, "expected insert audit row for reversal {reversal_id}");
 }
 
 #[tokio::test]
