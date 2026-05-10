@@ -14,6 +14,24 @@ pub const TOOL_NAME: &str = "submit_transaction_proposal";
 pub struct ClaudeResponse {
     pub content: Vec<ContentBlock>,
     pub stop_reason: Option<String>,
+    /// Token-usage block. Always present on a 2xx response per Anthropic docs.
+    /// Optional here so older fixtures and the fallback path stay parseable.
+    #[serde(default)]
+    pub usage: Option<UsageBlock>,
+}
+
+/// Subset of Anthropic's `usage` object. `cache_read_input_tokens` is the
+/// signal that prompt caching (T-066) actually hit; non-zero == cache hit.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UsageBlock {
+    #[serde(default)]
+    pub input_tokens: u32,
+    #[serde(default)]
+    pub output_tokens: u32,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u32,
+    #[serde(default)]
+    pub cache_read_input_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +97,7 @@ mod tests {
 
     fn valid_response() -> ClaudeResponse {
         ClaudeResponse {
+            usage: None,
             stop_reason: Some("tool_use".to_string()),
             content: vec![ContentBlock::ToolUse {
                 id: "tu_01abc".to_string(),
@@ -116,7 +135,7 @@ mod tests {
 
     #[test]
     fn errors_when_no_tool_use_block() {
-        let resp = ClaudeResponse {
+        let resp = ClaudeResponse { usage: None,
             stop_reason: Some("end_turn".to_string()),
             content: vec![ContentBlock::Text {
                 text: "I can help with that transaction.".to_string(),
@@ -127,7 +146,7 @@ mod tests {
 
     #[test]
     fn errors_when_tool_name_does_not_match() {
-        let resp = ClaudeResponse {
+        let resp = ClaudeResponse { usage: None,
             stop_reason: Some("tool_use".to_string()),
             content: vec![ContentBlock::ToolUse {
                 id: "tu_01".to_string(),
@@ -140,7 +159,7 @@ mod tests {
 
     #[test]
     fn errors_on_missing_required_field() {
-        let resp = ClaudeResponse {
+        let resp = ClaudeResponse { usage: None,
             stop_reason: Some("tool_use".to_string()),
             content: vec![ContentBlock::ToolUse {
                 id: "tu_01".to_string(),
@@ -153,7 +172,7 @@ mod tests {
 
     #[test]
     fn errors_on_invalid_input_type() {
-        let resp = ClaudeResponse {
+        let resp = ClaudeResponse { usage: None,
             stop_reason: Some("tool_use".to_string()),
             content: vec![ContentBlock::ToolUse {
                 id: "tu_01".to_string(),
@@ -166,7 +185,7 @@ mod tests {
 
     #[test]
     fn picks_correct_tool_when_multiple_blocks_present() {
-        let resp = ClaudeResponse {
+        let resp = ClaudeResponse { usage: None,
             stop_reason: Some("tool_use".to_string()),
             content: vec![
                 ContentBlock::Text { text: "Sure, let me record that.".to_string() },
@@ -189,7 +208,7 @@ mod tests {
 
     #[test]
     fn preserves_envelope_id_on_lines() {
-        let resp = ClaudeResponse {
+        let resp = ClaudeResponse { usage: None,
             stop_reason: Some("tool_use".to_string()),
             content: vec![ContentBlock::ToolUse {
                 id: "tu_01".to_string(),

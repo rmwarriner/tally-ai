@@ -14,6 +14,7 @@ use crate::ai::adapter::claude::ClaudeAdapter;
 use crate::ai::orchestrator::{MessageResponse, Orchestrator};
 use crate::chat::{ChatMessageRow, ChatRepo};
 use crate::core::coa::seed_chart_of_accounts;
+use crate::ai::adapter::AiUsage;
 use crate::core::correction::{undo_last_transaction as core_undo, CorrectionError};
 use crate::core::insight::{day_bucket_ms, log_if_new, should_emit, InsightKind, ProactiveInsight, Sensitivity};
 use crate::core::ledger::{commit_proposal as ledger_commit, LedgerError};
@@ -694,6 +695,11 @@ pub async fn submit_message(
 #[derive(Deserialize)]
 pub struct CommitProposalArgs {
     pub proposal: TransactionProposal,
+    /// Echoed back from the orchestrator's `MessageResponse::Proposal.ai_usage`
+    /// (T-069). Optional because non-AI commit paths (future manual-mode,
+    /// migrations, tests) won't have one. Persisted onto the resulting row.
+    #[serde(default)]
+    pub ai_usage: Option<AiUsage>,
 }
 
 #[derive(Serialize)]
@@ -735,6 +741,14 @@ pub async fn commit_proposal(
 
     match ledger_commit(&pool, &household_id, &args.proposal).await {
         Ok(txn_id) => {
+            // Best-effort: a token-stamping failure must not roll back the
+            // committed ledger entry — the columns are observability, not
+            // load-bearing. Errors print and continue.
+            if let Some(usage) = args.ai_usage.as_ref() {
+                if let Err(e) = stamp_ai_usage(&pool, &txn_id, usage).await {
+                    eprintln!("[commit_proposal] failed to stamp ai usage on {txn_id}: {e}");
+                }
+            }
             let proactive_insights = run_post_commit_triggers(&pool, &household_id).await;
             Ok(CommitOutcome::Committed {
                 txn_id,
@@ -791,6 +805,33 @@ async fn run_post_commit_triggers(
         }
     }
     emitted
+}
+
+/// Writes `ai_input_tokens` / `ai_output_tokens` / `ai_cache_hit` onto the
+/// transaction row created by `commit_proposal`. Best-effort by contract;
+/// see the call site for why we never fail the commit on a stamp error.
+///
+/// `pub` so the orchestrator contract test can drive the same SQL the
+/// command wrapper uses, proving the column round-trip end-to-end.
+pub async fn stamp_ai_usage(
+    pool: &sqlx::SqlitePool,
+    txn_id: &str,
+    usage: &AiUsage,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE transactions
+            SET ai_input_tokens  = ?,
+                ai_output_tokens = ?,
+                ai_cache_hit     = ?
+          WHERE id = ?",
+    )
+    .bind(usage.input_tokens as i64)
+    .bind(usage.output_tokens as i64)
+    .bind(if usage.cache_hit { 1_i64 } else { 0_i64 })
+    .bind(txn_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 async fn load_sensitivity_and_tz(

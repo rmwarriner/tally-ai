@@ -14,9 +14,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tally_desktop_lib::ai::adapter::{AdapterError, AiAdapter};
+use tally_desktop_lib::ai::adapter::{AdapterError, AiAdapter, AiUsage, ProposeResult};
 use tally_desktop_lib::ai::orchestrator::{MessageResponse, Orchestrator};
 use tally_desktop_lib::ai::BuiltPrompt;
+use tally_desktop_lib::commands::stamp_ai_usage;
 use tally_desktop_lib::core::correction::undo_last_transaction;
 use tally_desktop_lib::core::ledger::commit_proposal;
 use tally_desktop_lib::core::proposal::{ProposedLine, Side, TransactionProposal};
@@ -30,8 +31,11 @@ struct FixedProposalAdapter {
 
 #[async_trait]
 impl AiAdapter for FixedProposalAdapter {
-    async fn propose(&self, _prompt: &BuiltPrompt) -> Result<TransactionProposal, AdapterError> {
-        Ok(self.proposal.clone())
+    async fn propose(&self, _prompt: &BuiltPrompt) -> Result<ProposeResult, AdapterError> {
+        Ok(ProposeResult {
+            proposal: self.proposal.clone(),
+            usage: AiUsage::default(),
+        })
     }
 }
 
@@ -161,6 +165,31 @@ async fn submit_commit_undo_round_trip_matches_e2e_mock_shape() {
         .await
         .unwrap();
     assert_eq!(status, "posted");
+
+    // 2a) T-069: stamping the row with AiUsage round-trips into the new
+    // ai_input_tokens / ai_output_tokens / ai_cache_hit columns. Drives
+    // the same helper the Tauri commit_proposal wrapper calls.
+    stamp_ai_usage(
+        &pool,
+        &txn_id,
+        &AiUsage {
+            input_tokens: 1234,
+            output_tokens: 56,
+            cache_hit: true,
+        },
+    )
+    .await
+    .expect("stamp_ai_usage");
+    let (in_tokens, out_tokens, cache_hit): (i64, i64, i64) = sqlx::query_as(
+        "SELECT ai_input_tokens, ai_output_tokens, ai_cache_hit FROM transactions WHERE id = ?",
+    )
+    .bind(&txn_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(in_tokens, 1234);
+    assert_eq!(out_tokens, 56);
+    assert_eq!(cache_hit, 1);
 
     // 3) undo_last_transaction — wrapper-equivalent path used by /undo.
     let reversal_id = undo_last_transaction(&pool, &hh_id)

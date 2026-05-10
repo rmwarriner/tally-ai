@@ -40,7 +40,7 @@ function TransactionMessage({ message }: TransactionMessageProps) {
     if (!proposal) return;
     setIsCommitting(true);
     try {
-      await commit(message.id, proposal);
+      await commit(message.id, proposal, message.ai_usage);
     } finally {
       setIsCommitting(false);
     }

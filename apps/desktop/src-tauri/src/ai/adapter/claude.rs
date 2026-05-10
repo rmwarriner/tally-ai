@@ -8,10 +8,11 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{AdapterError, AiAdapter};
+use super::{AdapterError, AiAdapter, AiUsage, ProposeResult};
 use crate::ai::parser::{self, ClaudeResponse};
 use crate::ai::{BuiltPrompt, Message, Role};
-use crate::core::proposal::TransactionProposal;
+#[cfg(test)]
+use crate::ai::parser::UsageBlock;
 
 const MODEL: &str = "claude-sonnet-4-5";
 const MAX_TOKENS: u32 = 1024;
@@ -46,37 +47,32 @@ impl ClaudeAdapter {
         Self { api_key, client: Client::new() }
     }
 
+    /// Compact tool schema (T-070). Prose descriptions removed where the
+    /// property name + type are self-documenting; only fields whose semantics
+    /// are non-obvious carry a description. The serialized JSON is
+    /// length-gated by `tool_definition_under_token_budget`.
     pub fn proposal_tool() -> Value {
         json!({
             "name": parser::TOOL_NAME,
-            "description": "Submit a structured transaction proposal for validation and posting.",
+            "description": "Submit a transaction proposal for validation and posting.",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "memo": {
-                        "type": "string",
-                        "description": "Optional memo describing the transaction."
-                    },
+                    "memo": { "type": "string" },
                     "txn_date_ms": {
                         "type": "integer",
-                        "description": "Unix milliseconds — UTC midnight of the local transaction date."
+                        "description": "UTC midnight of the local txn date, unix ms."
                     },
                     "lines": {
                         "type": "array",
-                        "description": "Journal lines. Debits and credits must balance.",
+                        "description": "Debits and credits must balance.",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "account_id": { "type": "string" },
                                 "envelope_id": { "type": "string" },
-                                "amount_cents": {
-                                    "type": "integer",
-                                    "description": "Always positive; direction encoded in side."
-                                },
-                                "side": {
-                                    "type": "string",
-                                    "enum": ["debit", "credit"]
-                                }
+                                "amount_cents": { "type": "integer" },
+                                "side": { "type": "string", "enum": ["debit", "credit"] }
                             },
                             "required": ["account_id", "amount_cents", "side"]
                         }
@@ -90,25 +86,31 @@ impl ClaudeAdapter {
     async fn call_tool_use(
         &self,
         prompt: &BuiltPrompt,
-    ) -> Result<TransactionProposal, AdapterError> {
+    ) -> Result<ProposeResult, AdapterError> {
         let body = ToolUseRequest {
             model: MODEL,
             max_tokens: MAX_TOKENS,
-            system: &prompt.system,
+            // T-066: send `system` as content blocks so we can mark the BASE
+            // chunk ephemeral. Anthropic's prompt cache (5-min TTL) collapses
+            // ~600 cached tokens to ~10% billing on every subsequent request
+            // in the session.
+            system: cached_system_blocks(&prompt.system),
             messages: to_request_messages(&prompt.messages),
-            tools: vec![Self::proposal_tool()],
+            tools: vec![cached_tool_block(Self::proposal_tool())],
             tool_choice: ToolChoice { kind: "tool", name: parser::TOOL_NAME },
         };
 
         let resp = self.send_request(&body).await?;
         let claude_resp: ClaudeResponse = resp.json().await?;
-        parser::extract_proposal(&claude_resp)
+        let proposal = parser::extract_proposal(&claude_resp)?;
+        let usage = usage_from(&claude_resp);
+        Ok(ProposeResult { proposal, usage })
     }
 
     async fn call_json_fallback(
         &self,
         prompt: &BuiltPrompt,
-    ) -> Result<TransactionProposal, AdapterError> {
+    ) -> Result<ProposeResult, AdapterError> {
         let fallback_system = format!("{}{}", prompt.system, FALLBACK_SCHEMA_INSTRUCTION);
         let body = TextRequest {
             model: MODEL,
@@ -124,10 +126,12 @@ impl ClaudeAdapter {
         let text = claude_resp.content.iter().find_map(|b| {
             if let parser::ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
         });
-        match text {
-            Some(t) => parser::extract_proposal_from_text(t),
-            None => Err(AdapterError::NoToolUse),
-        }
+        let proposal = match text {
+            Some(t) => parser::extract_proposal_from_text(t)?,
+            None => return Err(AdapterError::NoToolUse),
+        };
+        let usage = usage_from(&claude_resp);
+        Ok(ProposeResult { proposal, usage })
     }
 
     async fn send_request<B: Serialize>(
@@ -171,11 +175,89 @@ fn to_request_messages(messages: &[Message]) -> Vec<RequestMessage> {
         .collect()
 }
 
+/// Splits `system` into a single content block carrying `cache_control`.
+/// We send the full prompt as one chunk because BASE + SNAPSHOT both stay
+/// stable within a chat session (snapshot updates after every commit, but
+/// reads dominate writes by far).
+fn cached_system_blocks(system: &str) -> Vec<Value> {
+    vec![json!({
+        "type": "text",
+        "text": system,
+        "cache_control": { "type": "ephemeral" },
+    })]
+}
+
+/// Wraps the tool definition with a `cache_control` marker. Tool definitions
+/// are static for the life of the binary so a cache hit is the common case.
+fn cached_tool_block(mut tool: Value) -> Value {
+    if let Some(map) = tool.as_object_mut() {
+        map.insert(
+            "cache_control".to_string(),
+            json!({ "type": "ephemeral" }),
+        );
+    }
+    tool
+}
+
+/// Folds the parser's `usage` block into the trait-level `AiUsage`. A
+/// missing usage object (older fixtures, fallback path) becomes zeros so
+/// callers never have to special-case `None`.
+fn usage_from(resp: &ClaudeResponse) -> AiUsage {
+    let u = resp.usage.clone().unwrap_or_default();
+    AiUsage {
+        input_tokens: u.input_tokens,
+        output_tokens: u.output_tokens,
+        cache_hit: u.cache_read_input_tokens > 0,
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    fn resp_with(usage: Option<UsageBlock>) -> ClaudeResponse {
+        ClaudeResponse { content: vec![], stop_reason: None, usage }
+    }
+
+    #[test]
+    fn usage_zeroed_when_block_missing() {
+        let u = usage_from(&resp_with(None));
+        assert_eq!(u.input_tokens, 0);
+        assert_eq!(u.output_tokens, 0);
+        assert!(!u.cache_hit);
+    }
+
+    #[test]
+    fn cache_hit_true_when_cache_read_tokens_nonzero() {
+        let u = usage_from(&resp_with(Some(UsageBlock {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 600,
+        })));
+        assert_eq!(u.input_tokens, 100);
+        assert_eq!(u.output_tokens, 50);
+        assert!(u.cache_hit);
+    }
+
+    #[test]
+    fn cache_hit_false_when_only_cache_creation_present() {
+        // First call in a session writes the cache but doesn't read it yet.
+        let u = usage_from(&resp_with(Some(UsageBlock {
+            input_tokens: 700,
+            output_tokens: 50,
+            cache_creation_input_tokens: 600,
+            cache_read_input_tokens: 0,
+        })));
+        assert!(!u.cache_hit);
+    }
+}
+
 #[derive(Serialize)]
-struct ToolUseRequest<'a> {
+struct ToolUseRequest {
     model: &'static str,
     max_tokens: u32,
-    system: &'a str,
+    system: Vec<Value>,
     messages: Vec<RequestMessage>,
     tools: Vec<Value>,
     tool_choice: ToolChoice,
@@ -214,9 +296,9 @@ struct ApiErrorDetail {
 
 #[async_trait]
 impl AiAdapter for ClaudeAdapter {
-    async fn propose(&self, prompt: &BuiltPrompt) -> Result<TransactionProposal, AdapterError> {
+    async fn propose(&self, prompt: &BuiltPrompt) -> Result<ProposeResult, AdapterError> {
         match self.call_tool_use(prompt).await {
-            Ok(proposal) => Ok(proposal),
+            Ok(result) => Ok(result),
             // T-026: retry with explicit JSON schema on tool use failure.
             Err(AdapterError::NoToolUse) => self.call_json_fallback(prompt).await,
             Err(e) => Err(e),
@@ -299,5 +381,48 @@ mod tests {
         let req = to_request_messages(&messages);
         assert_eq!(req[0].role, "user");
         assert_eq!(req[1].role, "assistant");
+    }
+
+    /// T-066: BASE + SNAPSHOT system content must carry an `ephemeral`
+    /// cache_control marker so the cache covers it. Without this the
+    /// 30–40% per-message savings disappear silently.
+    #[test]
+    fn cached_system_blocks_carry_ephemeral_marker() {
+        let blocks = cached_system_blocks("system text");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["text"], "system text");
+        assert_eq!(blocks[0]["cache_control"]["type"], "ephemeral");
+    }
+
+    /// T-066: tool definition must also be cached. Same rationale; the
+    /// tool block is static across the binary's lifetime.
+    #[test]
+    fn cached_tool_block_carries_ephemeral_marker() {
+        let block = cached_tool_block(ClaudeAdapter::proposal_tool());
+        assert_eq!(block["cache_control"]["type"], "ephemeral");
+        // Make sure the wrap didn't drop the schema fields.
+        assert_eq!(block["name"], parser::TOOL_NAME);
+        assert!(block["input_schema"]["properties"]["lines"].is_object());
+    }
+
+    /// T-070 gate. The tool definition is sent on every API call and
+    /// compounds across the session. The 350-token budget keeps the static
+    /// per-call cost in check; we approximate Anthropic's tokenizer with
+    /// the same `chars / 4` rule used in `ai::prompt::approx_tokens`.
+    /// Budget = 350 tokens × 4 chars/token = 1400 chars.
+    #[test]
+    fn tool_definition_under_token_budget() {
+        const MAX_CHARS: usize = 1400;
+        let serialized = serde_json::to_string(&ClaudeAdapter::proposal_tool()).unwrap();
+        assert!(
+            serialized.len() <= MAX_CHARS,
+            "tool definition is {} chars (≈{} tokens); budget is {} chars (≈{} tokens). \
+             Trim descriptions or split rather than expand the budget.",
+            serialized.len(),
+            serialized.len() / 4,
+            MAX_CHARS,
+            MAX_CHARS / 4,
+        );
     }
 }

@@ -10,6 +10,14 @@ import { safeInvokeOrAdvise } from "../lib/safeInvoke";
 import { useChatStore, type ProactiveInsight } from "../stores/chatStore";
 import { generateUlid } from "../utils/ulid";
 
+/// Mirrors `ai::adapter::AiUsage`. Echoed back to commit_proposal so the
+/// resulting transaction row carries the per-call token totals.
+export interface AiUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_hit: boolean;
+}
+
 type MessageResponse =
   | { kind: "text"; text: string }
   | {
@@ -20,6 +28,9 @@ type MessageResponse =
       account_names: Record<string, string>;
       /// Optional in JSON; absent or empty when no triggers fired.
       proactive_insights?: ProactiveInsight[];
+      /// Optional in JSON; defaulted server-side. Stored on the message
+      /// so `useCommitProposal` can echo it back at Confirm time.
+      ai_usage?: AiUsage;
     };
 
 export interface SendMessageDeps {
@@ -61,6 +72,7 @@ export function useSendMessage(deps: SendMessageDeps = {}) {
         state: "pending",
         transaction: display,
         proposal: response.proposal,
+        ai_usage: response.ai_usage,
       });
       for (const insight of response.proactive_insights ?? []) {
         appendInsight(insight);
