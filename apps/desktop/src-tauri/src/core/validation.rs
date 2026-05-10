@@ -36,7 +36,8 @@ pub enum SoftWarningCode {
     LargeAmount,
     EnvelopeOverdraft,
     StaleDate,
-    PossibleDuplicate,
+    // PossibleDuplicate removed in #114 — duplicate detection lives in the
+    // Tier-3 trigger (`core::triggers::duplicate`) with tighter scoping.
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,6 +213,11 @@ pub async fn validate_proposal(
     // DB checks: ERR_INVALID_ACCOUNT, ERR_PLACEHOLDER_ACCOUNT, ERR_ABNORMAL_BALANCE
     validate_accounts(pool, proposal, &mut errors).await;
 
+    // ERR_ENVELOPE_MISMATCH (#113): a journal_line tagged with envelope X
+    // must target the account X belongs to. AI tool calls have proposed
+    // wrong-envelope debits in dev — this catches them before they post.
+    check_envelope_mismatch(pool, proposal, &mut errors).await;
+
     if !errors.is_empty() {
         let mut iter = errors.into_iter();
         let first = iter.next().unwrap(); // safe: non-empty
@@ -289,7 +295,10 @@ async fn check_soft_warnings(
     }
 
     check_envelope_overdraft(pool, proposal, &mut warnings).await;
-    check_possible_duplicate(pool, proposal, &mut warnings).await;
+    // Duplicate detection lives in `core::triggers::duplicate` (T-052),
+    // which has tighter scoping (household + memo + day) and surfaces as a
+    // proactive insight instead of a blocking warning. The validation-tier
+    // rule was removed in #114 to avoid double-messaging the user.
 
     warnings
 }
@@ -334,52 +343,49 @@ async fn check_envelope_overdraft(
     }
 }
 
-async fn check_possible_duplicate(
+/// #113: rejects proposals where a journal_line tags an envelope that
+/// doesn't belong to the line's account. One error per proposal regardless
+/// of how many lines mismatch — the user fixes them all in one revision.
+async fn check_envelope_mismatch(
     pool: &SqlitePool,
     proposal: &TransactionProposal,
-    warnings: &mut Vec<SoftWarning>,
+    errors: &mut Vec<HardError>,
 ) {
-    let debit_total: i64 = proposal
-        .lines
-        .iter()
-        .filter(|l| matches!(l.side, Side::Debit))
-        .map(|l| l.amount_cents)
-        .sum();
-
-    if debit_total == 0 {
-        return;
-    }
-
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM (
-             SELECT t.id
-             FROM transactions t
-             JOIN journal_lines jl ON jl.transaction_id = t.id
-             WHERE t.status = 'posted'
-             AND ABS(t.txn_date - ?) <= ?
-             AND jl.side = 'debit'
-             GROUP BY t.id
-             HAVING SUM(jl.amount) = ?
-         )",
-    )
-    .bind(proposal.txn_date_ms)
-    .bind(ONE_DAY_MS)
-    .bind(debit_total)
-    .fetch_one(pool)
-    .await
-    .unwrap_or((0,));
-
-    if count > 0 {
-        warnings.push(soft_warning(
-            SoftWarningCode::PossibleDuplicate,
-            "A transaction with the same amount exists within one day. This may be a duplicate.",
-            RecoveryAction {
-                kind: RecoveryKind::PostAnyway,
-                label: "Post anyway".to_string(),
-                is_primary: true,
-            },
-            vec![discard_action()],
-        ));
+    for line in &proposal.lines {
+        let Some(envelope_id) = &line.envelope_id else {
+            continue;
+        };
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT account_id FROM envelopes WHERE id = ?")
+                .bind(envelope_id)
+                .fetch_optional(pool)
+                .await
+                .unwrap_or(None);
+        match row {
+            // Unknown envelope is treated as a mismatch (tagging an envelope
+            // that doesn't exist is the same kind of bug from the user's
+            // perspective).
+            None => {
+                errors.push(hard_error(
+                    HardErrorCode::EnvelopeMismatch,
+                    "An envelope on this transaction doesn't match its account.",
+                    edit_action("Change envelope"),
+                    vec![discard_action()],
+                ));
+                return;
+            }
+            Some((envelope_account_id,)) => {
+                if envelope_account_id != line.account_id {
+                    errors.push(hard_error(
+                        HardErrorCode::EnvelopeMismatch,
+                        "An envelope on this transaction doesn't match its account.",
+                        edit_action("Change envelope"),
+                        vec![discard_action()],
+                    ));
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -599,8 +605,8 @@ mod tests {
     #[test]
     fn soft_warning_always_has_recovery_actions() {
         let warning = soft_warning(
-            SoftWarningCode::PossibleDuplicate,
-            "This looks like a transaction you've already recorded.",
+            SoftWarningCode::EnvelopeOverdraft,
+            "This would put the envelope over its allocated amount.",
             post_anyway(),
             vec![discard()],
         );
@@ -625,10 +631,6 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&SoftWarningCode::StaleDate).unwrap(),
             "\"STALE_DATE\""
-        );
-        assert_eq!(
-            serde_json::to_string(&SoftWarningCode::PossibleDuplicate).unwrap(),
-            "\"POSSIBLE_DUPLICATE\""
         );
     }
 
@@ -1060,41 +1062,8 @@ mod tests {
         assert!(warning_codes(&result).contains(&SoftWarningCode::EnvelopeOverdraft));
     }
 
-    #[tokio::test]
-    async fn soft_warn_possible_duplicate() {
-        let pool = test_pool().await;
-        insert_household(&pool, "hh_sw5").await;
-        insert_account(&pool, "hh_sw5", "acc_i", "debit", false).await;
-        insert_account(&pool, "hh_sw5", "acc_j", "credit", false).await;
-
-        let txn_date = now_ms();
-
-        // Seed an existing posted txn with same amount on the same date
-        sqlx::query(
-            "INSERT INTO transactions (id, household_id, txn_date, entry_date, status, source, created_at)
-             VALUES ('existing_txn', 'hh_sw5', ?, 0, 'posted', 'manual', 0)",
-        )
-        .bind(txn_date)
-        .execute(&pool)
-        .await
-        .expect("txn");
-        sqlx::query(
-            "INSERT INTO journal_lines (id, transaction_id, account_id, amount, side, created_at)
-             VALUES ('existing_jl', 'existing_txn', 'acc_i', 7500, 'debit', 0)",
-        )
-        .execute(&pool)
-        .await
-        .expect("line");
-
-        let p = TransactionProposal {
-            memo: None,
-            txn_date_ms: txn_date,
-            lines: vec![debit_line("acc_i", 7500), credit_line("acc_j", 7500)],
-        };
-        let result = validate_proposal(&pool, &p).await;
-        assert!(!result.is_rejected());
-        assert!(warning_codes(&result).contains(&SoftWarningCode::PossibleDuplicate));
-    }
+    // soft_warn_possible_duplicate removed in #114 — duplicate detection
+    // moved to `core::triggers::duplicate` (T-052) with tighter scoping.
 
     #[tokio::test]
     async fn hard_errors_suppress_soft_warnings() {

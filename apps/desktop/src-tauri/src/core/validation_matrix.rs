@@ -571,39 +571,47 @@ async fn tier1_abnormal_balance_edge_exact_zero_swing_passes() {
 
 // --- EnvelopeMismatch -----------------------------------------------------
 //
-// NOTE: As of 2026-04-26, `HardErrorCode::EnvelopeMismatch` is declared in
-// the enum but never emitted anywhere in `validation.rs`. The intended rule
-// — "envelope_id only valid on expense lines" — is not implemented. We keep
-// the matrix slot so the inventory is complete: the trigger test documents
-// today's behavior (no rule fires) and will fail loudly the day the rule
-// lands, prompting a real assertion.
+// Trigger: a journal_line tags an envelope_id whose `envelopes.account_id`
+// does not match the line's `account_id`. The grocery envelope created by
+// `seed_household` is bound to the expense account; tagging it on the cash
+// credit line is the canonical mismatch case.
+//
+// Recovery: `EditField` primary ("Change envelope"), `Discard` extra.
+// Implemented in #113.
 
 #[tokio::test]
 async fn tier1_envelope_mismatch_triggers() {
-    // Attach an envelope to the cash credit line — per the design rule this
-    // should reject (envelopes are expense-only). Today the validator is
-    // silent; assert the *current* behavior so regressions are visible.
     let pool = fresh_pool().await;
     let seed = seed_household(&pool).await;
     let mut p = baseline_proposal_for(&seed);
+    // Tag the grocery envelope (account = expense) on the cash credit line.
     p.lines[1].envelope_id = Some(seed.grocery_envelope_id.clone());
 
     let result = validate_proposal(&pool, &p).await;
 
-    // TODO(t-060): once EnvelopeMismatch is implemented, flip this to
-    // `assert!(hard_codes(&result).contains(&HardErrorCode::EnvelopeMismatch))`
-    // and assert the recovery-kind set against the new code.
     assert!(
-        !hard_codes(&result).contains(&HardErrorCode::EnvelopeMismatch),
-        "EnvelopeMismatch is not yet implemented in validation.rs — \
-         if this test starts failing, the rule landed: update the matrix \
-         to assert the intended behavior. Got: {:?}",
+        hard_codes(&result).contains(&HardErrorCode::EnvelopeMismatch),
+        "expected EnvelopeMismatch but got: {:?}",
         hard_codes(&result),
+    );
+    let err = find_hard(&result, HardErrorCode::EnvelopeMismatch)
+        .expect("EnvelopeMismatch err present");
+    let kinds = recovery_kinds_of_hard(err);
+    assert!(
+        first_kind_is(&kinds, RecoveryKind::EditField),
+        "primary recovery: expected EditField, got {:?}",
+        kinds.first(),
+    );
+    assert!(
+        kinds_contain(&kinds, RecoveryKind::Discard),
+        "expected Discard among recovery kinds, got {:?}",
+        kinds,
     );
 }
 
 #[tokio::test]
 async fn tier1_envelope_mismatch_does_not_trigger_when_clean() {
+    // Baseline has no envelope tags — no mismatch possible.
     let pool = fresh_pool().await;
     let seed = seed_household(&pool).await;
     let p = baseline_proposal_for(&seed);
@@ -611,9 +619,50 @@ async fn tier1_envelope_mismatch_does_not_trigger_when_clean() {
     assert!(!hard_codes(&result).contains(&HardErrorCode::EnvelopeMismatch));
 }
 
-// no edge case applicable — rule is unimplemented; once it lands, an edge
-// (e.g. envelope on an income line, or envelope on a debit-side expense)
-// should be added.
+#[tokio::test]
+async fn tier1_envelope_mismatch_passes_when_envelope_matches_account() {
+    // The grocery envelope's underlying account isn't necessarily the
+    // pre-seeded "Groceries" expense account — `create_envelope_with_current_period`
+    // picks "the first non-placeholder expense account" by SELECT order.
+    // Fetch the bound account directly and put the line on it so the
+    // matches-case is unambiguous.
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let (envelope_account_id,): (String,) =
+        sqlx::query_as("SELECT account_id FROM envelopes WHERE id = ?")
+            .bind(&seed.grocery_envelope_id)
+            .fetch_one(&pool)
+            .await
+            .expect("look up envelope.account_id");
+
+    let mut p = baseline_proposal_for(&seed);
+    p.lines[0].account_id = envelope_account_id;
+    p.lines[0].envelope_id = Some(seed.grocery_envelope_id.clone());
+
+    let result = validate_proposal(&pool, &p).await;
+    assert!(
+        !hard_codes(&result).contains(&HardErrorCode::EnvelopeMismatch),
+        "matching envelope on the right account should not trigger, got {:?}",
+        hard_codes(&result),
+    );
+}
+
+#[tokio::test]
+async fn tier1_envelope_mismatch_triggers_for_unknown_envelope_id() {
+    // Tagging a nonexistent envelope is treated as a mismatch — same user
+    // recovery flow.
+    let pool = fresh_pool().await;
+    let seed = seed_household(&pool).await;
+    let mut p = baseline_proposal_for(&seed);
+    p.lines[0].envelope_id = Some("env_does_not_exist".to_string());
+
+    let result = validate_proposal(&pool, &p).await;
+    assert!(
+        hard_codes(&result).contains(&HardErrorCode::EnvelopeMismatch),
+        "unknown envelope_id should trigger EnvelopeMismatch, got {:?}",
+        hard_codes(&result),
+    );
+}
 
 // === Task 5: Tier 2 (SoftWarning) matrix ==================================
 //
@@ -666,56 +715,9 @@ async fn set_grocery_allocation(pool: &SqlitePool, envelope_id: &str, cents: i64
     .expect("update allocation");
 }
 
-/// Inserts a posted transaction with a single debit + single credit line so
-/// the duplicate detector (which matches by `SUM(debit) GROUP BY t.id`)
-/// finds it. Mirrors `validation.rs::tests::soft_warn_possible_duplicate`.
-async fn seed_posted_txn(
-    pool: &SqlitePool,
-    household_id: &str,
-    debit_account_id: &str,
-    credit_account_id: &str,
-    amount_cents: i64,
-    txn_date_ms: i64,
-) {
-    let txn_id = new_ulid();
-    sqlx::query(
-        "INSERT INTO transactions
-             (id, household_id, txn_date, entry_date, status, source, created_at)
-         VALUES (?, ?, ?, 0, 'posted', 'manual', 0)",
-    )
-    .bind(&txn_id)
-    .bind(household_id)
-    .bind(txn_date_ms)
-    .execute(pool)
-    .await
-    .expect("seed posted txn");
-
-    sqlx::query(
-        "INSERT INTO journal_lines
-             (id, transaction_id, account_id, amount, side, created_at)
-         VALUES (?, ?, ?, ?, 'debit', 0)",
-    )
-    .bind(new_ulid())
-    .bind(&txn_id)
-    .bind(debit_account_id)
-    .bind(amount_cents)
-    .execute(pool)
-    .await
-    .expect("seed posted debit");
-
-    sqlx::query(
-        "INSERT INTO journal_lines
-             (id, transaction_id, account_id, amount, side, created_at)
-         VALUES (?, ?, ?, ?, 'credit', 0)",
-    )
-    .bind(new_ulid())
-    .bind(&txn_id)
-    .bind(credit_account_id)
-    .bind(amount_cents)
-    .execute(pool)
-    .await
-    .expect("seed posted credit");
-}
+// `seed_posted_txn` removed in #114 alongside the PossibleDuplicate matrix
+// tests. The duplicate trigger has its own seed helpers in
+// `core::triggers::duplicate::tests`.
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -946,9 +948,17 @@ async fn tier2_envelope_overdraft_triggers() {
     let pool = fresh_pool().await;
     let seed = seed_household(&pool).await;
     set_grocery_allocation(&pool, &seed.grocery_envelope_id, 1_000).await;
+    // Use the envelope's actual bound account (not always seed.expense_account_id —
+    // see the EnvelopeMismatch test for why) so the new EnvelopeMismatch
+    // rule passes and we exercise overdraft cleanly.
+    let (envelope_account_id,): (String,) =
+        sqlx::query_as("SELECT account_id FROM envelopes WHERE id = ?")
+            .bind(&seed.grocery_envelope_id)
+            .fetch_one(&pool)
+            .await
+            .expect("look up envelope.account_id");
     let mut p = baseline_proposal_for(&seed);
-    // Attach the envelope to the (debit) Groceries line. line amount=1500 >
-    // allocated=1000 → overdraft.
+    p.lines[0].account_id = envelope_account_id;
     p.lines[0].envelope_id = Some(seed.grocery_envelope_id.clone());
 
     let result = validate_proposal(&pool, &p).await;
@@ -1004,87 +1014,10 @@ async fn tier2_envelope_overdraft_edge_exactly_at_cap_passes() {
 }
 
 // --- PossibleDuplicate ----------------------------------------------------
-//
-// Trigger: a posted transaction exists whose debit-side total equals the
-// proposal's debit-side total, dated within `ONE_DAY_MS` of the proposal.
-// Note: the rule does NOT filter by household, account, or payee — only by
-// debit total + date proximity.
-// Recovery: `PostAnyway` primary, `Discard` extra.
-
-#[tokio::test]
-async fn tier2_possible_duplicate_triggers() {
-    let pool = fresh_pool().await;
-    let seed = seed_household(&pool).await;
-    let p = baseline_proposal_for(&seed);
-    // Seed a posted txn one day before the proposal date with the same
-    // $15.00 debit total.
-    seed_posted_txn(
-        &pool,
-        &seed.household_id,
-        &seed.expense_account_id,
-        &seed.cash_account_id,
-        1500,
-        p.txn_date_ms - ONE_DAY_MS,
-    )
-    .await;
-
-    let result = validate_proposal(&pool, &p).await;
-
-    assert!(
-        soft_codes(&result).contains(&SoftWarningCode::PossibleDuplicate),
-        "expected PossibleDuplicate but got: {:?}",
-        soft_codes(&result),
-    );
-    let warn = find_soft(&result, SoftWarningCode::PossibleDuplicate)
-        .expect("PossibleDuplicate warn present");
-    let kinds = recovery_kinds_of_soft(warn);
-    assert!(
-        first_kind_is(&kinds, RecoveryKind::PostAnyway),
-        "primary recovery for PossibleDuplicate: expected PostAnyway, got {:?}",
-        kinds.first(),
-    );
-    assert!(
-        kinds_contain(&kinds, RecoveryKind::Discard),
-        "PossibleDuplicate should also offer Discard, got {:?}",
-        kinds,
-    );
-}
-
-#[tokio::test]
-async fn tier2_possible_duplicate_does_not_trigger_when_clean() {
-    // No matching posted txn seeded → no duplicate.
-    let pool = fresh_pool().await;
-    let seed = seed_household(&pool).await;
-    let p = baseline_proposal_for(&seed);
-    let result = validate_proposal(&pool, &p).await;
-    assert!(!soft_codes(&result).contains(&SoftWarningCode::PossibleDuplicate));
-}
-
-#[tokio::test]
-async fn tier2_possible_duplicate_edge_outside_window_passes() {
-    // Boundary: the rule looks for matches `WHERE ABS(t.txn_date - ?) <= ONE_DAY_MS`.
-    // A posted txn dated more than one day from the proposal must NOT trigger,
-    // even when the amount matches exactly.
-    let pool = fresh_pool().await;
-    let seed = seed_household(&pool).await;
-    let p = baseline_proposal_for(&seed);
-    seed_posted_txn(
-        &pool,
-        &seed.household_id,
-        &seed.expense_account_id,
-        &seed.cash_account_id,
-        1500,
-        p.txn_date_ms - 3 * ONE_DAY_MS,
-    )
-    .await;
-
-    let result = validate_proposal(&pool, &p).await;
-    assert!(
-        !soft_codes(&result).contains(&SoftWarningCode::PossibleDuplicate),
-        "match outside ±1-day window should not trigger PossibleDuplicate, got {:?}",
-        soft_codes(&result),
-    );
-}
+// Removed in #114. Duplicate detection is now a Tier-3 trigger
+// (`core::triggers::duplicate`) with tighter scoping — same household,
+// same calendar day, same memo, same amount. The matrix entry for the
+// trigger lives there, not here.
 
 // === Task 6: Tier 3 (AIAdvisory) matrix ===================================
 //
