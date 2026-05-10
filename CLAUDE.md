@@ -89,7 +89,7 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 - Stub Phase 2 extension points with clear TODO(phase2) comments.
 
-## Implementation status (as of 2026-05-10)
+## Implementation status (as of 2026-05-10, Phase 2 in progress)
 
 **Chat surface (T-033–T-039, T-044):**
 - Chat thread: message rendering by type, date separators, auto-scroll, new-message
@@ -265,10 +265,32 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 - E2E coverage rules live in `apps/desktop/e2e/MATRIX.md` — same discipline
   as the React component MATRIX.
 
+**Phase 2 Tier 1 — security hardening (#142, #143):**
+- CSPRNG (#142): `commands::create_household` now uses
+  `crate::crypto::generate_salt` (rand crate's thread RNG, CSPRNG-quality)
+  instead of the prior `DefaultHasher`-of-(time,pid) construction. Fix is a
+  4-line redirect in `commands/mod.rs` — the proper helper was already
+  exported from `crypto::key_derivation` but never called by anything.
+- audit_log writes (#143): new `core::audit` module exposes a single
+  `write(tx, household_id, table_name, row_id, action, payload, now_ms)`
+  helper that runs inside the caller's open SQL transaction. Wired into
+  every ledger mutation: `core::ledger::commit_proposal`,
+  `core::ledger::create_opening_balance`, `core::correction::void_and_reverse`
+  (one update + one insert), `core::correction::correct_transaction`
+  (replacement insert), and `commands::set_opening_balance` (which also
+  gained an explicit SQL transaction wrapper).
+- Payload shape: full proposal JSON (#143 design call). Disk is cheap;
+  joins to reconstruct payloads later are not.
+- Atomicity contract: audit failure aborts the whole SQL transaction.
+  No quiet compliance holes — an audit row that's missing for a real
+  ledger mutation is a bug we want to find via test/CI, not via silent
+  drop.
+- Test coverage: `core::audit` has 3 unit tests (write+roundtrip, rollback
+  with outer txn, all three actions). The orchestrator contract test
+  (`orchestrator_e2e_contract.rs`) asserts both the commit-side audit row
+  and the void+reversal pair from undo round-trip end-to-end.
+
 ## Phase 2 stubs (TODO(phase2) in code)
 
-- Full hledger CoA mapping (`import_hledger` command).
-- Persistent AI defaults table (`get_ai_defaults` command).
-- Proper CSPRNG for salt generation (currently `DefaultHasher` + time + pid).
-- Pre-existing `audit_log` write gap — no production code populates it yet
-  (flagged during T-072 review; out of Phase 1 scope).
+- Full hledger CoA mapping (`import_hledger` command). [#145]
+- Persistent AI defaults table (`get_ai_defaults` command). [#144]

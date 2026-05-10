@@ -128,8 +128,10 @@ pub async fn create_household(
     let path = db_path(&app).map_err(RecoveryError::show_help)?;
     let sp = salt_path(&app).map_err(RecoveryError::show_help)?;
 
-    // Generate a fresh random 16-byte salt
-    let salt: [u8; 16] = rand_salt();
+    // Generate a fresh random 16-byte salt via the rand crate's CSPRNG (#142).
+    // Replaces the prior DefaultHasher-of-(time, pid) construction, which was
+    // predictable enough to undermine Argon2id's defense against rainbow tables.
+    let salt: [u8; 16] = crate::crypto::generate_salt();
     std::fs::write(&sp, salt)
         .map_err(|e| RecoveryError::show_help(format!("Cannot write salt: {e}")))?;
 
@@ -319,6 +321,13 @@ pub async fn set_opening_balance(
     let line2_id = new_ulid();
     let ts = now_ms();
 
+    // #143: wrap the three writes + audit row in one SQL transaction so a
+    // partial failure doesn't leave the ledger inconsistent.
+    let mut sql_tx = pool
+        .begin()
+        .await
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
+
     sqlx::query(
         "INSERT INTO transactions (id, household_id, txn_date, entry_date, status, source, memo, created_at)
          VALUES (?, ?, ?, ?, 'posted', 'opening_balance', 'Opening balance', ?)",
@@ -328,7 +337,7 @@ pub async fn set_opening_balance(
     .bind(ts)
     .bind(ts)
     .bind(ts)
-    .execute(&pool)
+    .execute(&mut *sql_tx)
     .await
     .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
@@ -342,7 +351,7 @@ pub async fn set_opening_balance(
     .bind(args.amount_cents)
     .bind(primary_side)
     .bind(ts)
-    .execute(&pool)
+    .execute(&mut *sql_tx)
     .await
     .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
@@ -356,9 +365,34 @@ pub async fn set_opening_balance(
     .bind(args.amount_cents)
     .bind(equity_side)
     .bind(ts)
-    .execute(&pool)
+    .execute(&mut *sql_tx)
     .await
     .map_err(|e| RecoveryError::show_help(e.to_string()))?;
+
+    crate::core::audit::write(
+        &mut sql_tx,
+        &household_id,
+        "transactions",
+        &txn_id,
+        crate::core::audit::AuditAction::Insert,
+        &serde_json::json!({
+            "memo": "Opening balance",
+            "source": "opening_balance",
+            "txn_date_ms": ts,
+            "lines": [
+                { "account_id": args.account_id, "amount_cents": args.amount_cents, "side": primary_side },
+                { "account_id": obe_id, "amount_cents": args.amount_cents, "side": equity_side },
+            ],
+        }),
+        ts,
+    )
+    .await
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
+
+    sql_tx
+        .commit()
+        .await
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
 
     Ok(())
 }
@@ -970,33 +1004,6 @@ pub async fn has_api_key() -> Result<bool, RecoveryError> {
 pub async fn delete_api_key() -> Result<(), RecoveryError> {
     delete_claude_api_key(&KeyringStore::new())
         .map_err(|e| RecoveryError::show_help(e.to_string()))
-}
-
-// ── Deterministic salt generation (simple, uses OS random) ────────────────────
-
-fn rand_salt() -> [u8; 16] {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    // Use a combination of time + process ID for entropy.
-    // Not cryptographically strong but sufficient for Phase 1 before
-    // we wire a proper CSPRNG. TODO(phase2): use getrandom crate.
-    let mut hasher = DefaultHasher::new();
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos()
-        .hash(&mut hasher);
-    std::process::id().hash(&mut hasher);
-    let h1 = hasher.finish();
-    std::thread::current().id().hash(&mut hasher);
-    let h2 = hasher.finish();
-
-    let mut salt = [0u8; 16];
-    salt[..8].copy_from_slice(&h1.to_le_bytes());
-    salt[8..].copy_from_slice(&h2.to_le_bytes());
-    salt
 }
 
 // ── Sidebar read queries (T-048) ──────────────────────────────────────────────
