@@ -15,11 +15,11 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use thiserror::Error;
 
-use crate::ai::adapter::{AdapterError, AiAdapter};
+use crate::ai::adapter::{AdapterError, AiAdapter, AiUsage, ProposeResult};
 use crate::ai::classifier::{classify, IntentKind};
 use crate::ai::payee_memory::PayeeMemory;
 use crate::ai::prompt::PromptBuilder;
-use crate::ai::snapshot::build_snapshot;
+use crate::ai::snapshot::{build_snapshot_with_scope, SnapshotScope};
 use crate::ai::{Message, Role};
 use crate::chat::ChatRepo;
 use crate::core::insight::{log_if_new, should_emit, ProactiveInsight, Sensitivity};
@@ -36,7 +36,9 @@ call the submit_transaction_proposal tool with the structured proposal. Keep tex
 no hedging, no recap, no markdown.";
 
 const HISTORY_FETCH_LIMIT: i64 = 40;
-const PROMPT_HISTORY_LIMIT: usize = 20;
+/// T-067: cap raw history at 10 messages. Anything older folds into the
+/// rolling summary so HISTORY stays under its ~800-token budget.
+const PROMPT_HISTORY_LIMIT: usize = 10;
 const PAYEE_MEMORY_HINTS: usize = 10;
 
 #[derive(Debug, Error)]
@@ -71,6 +73,11 @@ pub enum MessageResponse {
         /// `core::insight::log_if_new`. Empty when nothing fires.
         #[serde(default)]
         proactive_insights: Vec<ProactiveInsight>,
+        /// Token usage for the propose call (T-069). The frontend echoes
+        /// this back on `commit_proposal` so the resulting transaction row
+        /// captures `ai_input_tokens` / `ai_output_tokens` / `ai_cache_hit`.
+        #[serde(default)]
+        ai_usage: AiUsage,
     },
 }
 
@@ -98,13 +105,20 @@ impl Orchestrator {
     ) -> Result<MessageResponse, OrchestratorError> {
         let intent = classify(user_text);
         let now = now_ms();
-        let snapshot = build_snapshot(&self.pool, household_id, now).await?;
+        // T-068: load only what each intent needs. QueryBalance skips
+        // envelope rows (it doesn't render them), and non-Record intents
+        // also skip payee memory hints.
+        let scope = scope_for(intent.kind);
+        let snapshot = build_snapshot_with_scope(&self.pool, household_id, now, scope).await?;
 
         match intent.kind {
             IntentKind::QueryBalance => Ok(MessageResponse::Text { text: snapshot.to_prompt_text() }),
 
             IntentKind::RecordExpense | IntentKind::RecordIncome => {
-                let history = self.load_prompt_history(household_id).await?;
+                let HistoryWithSummary { history, summary } =
+                    self.load_prompt_history(household_id, now).await?;
+                // Memory hints are intent-scoped: only Record intents
+                // (T-068) — they're the only path that uses payee memory.
                 let hints = self.payee_memory.top_hints(household_id, PAYEE_MEMORY_HINTS).await;
 
                 let mut prompt = PromptBuilder::new(
@@ -115,9 +129,16 @@ impl Orchestrator {
                 .with_history(history)
                 .with_memory(hints)
                 .build();
+                // T-067: prepend the rolling summary so older context isn't lost.
+                if let Some(summary) = summary {
+                    prompt.messages.insert(
+                        0,
+                        Message::user(format!("[Earlier conversation summary: {summary}]")),
+                    );
+                }
                 prompt.messages.push(Message::user(user_text.to_string()));
 
-                let proposal = self.adapter.propose(&prompt).await?;
+                let ProposeResult { proposal, usage } = self.adapter.propose(&prompt).await?;
                 let validation = validate_proposal(&self.pool, &proposal).await;
                 let account_names = lookup_account_names(&self.pool, &proposal).await?;
                 let proactive_insights =
@@ -128,6 +149,7 @@ impl Orchestrator {
                     advisories: Vec::new(),
                     account_names,
                     proactive_insights,
+                    ai_usage: usage,
                 })
             }
 
@@ -141,10 +163,17 @@ impl Orchestrator {
         }
     }
 
-    async fn load_prompt_history(&self, household_id: &str) -> Result<Vec<Message>, OrchestratorError> {
+    /// T-067: returns the last 10 conversational turns plus, if older
+    /// turns exist beyond the cap, a deterministic rolling summary of the
+    /// dropped pairs. Persists the summary asynchronously so subsequent
+    /// requests can read it without recomputing.
+    async fn load_prompt_history(
+        &self,
+        household_id: &str,
+        now_ms: i64,
+    ) -> Result<HistoryWithSummary, OrchestratorError> {
         let rows = self.chat.list_before(household_id, i64::MAX, HISTORY_FETCH_LIMIT).await?;
-        // Rows are newest-first; filter to conversational turns, then reverse for chronological.
-        let mut history: Vec<Message> = rows
+        let mut all: Vec<Message> = rows
             .into_iter()
             .filter_map(|row| match row.kind.as_str() {
                 "user" => extract_text(&row.payload).map(|t| Message { role: Role::User, content: t }),
@@ -152,11 +181,93 @@ impl Orchestrator {
                 _ => None,
             })
             .collect();
-        history.reverse();
-        // Keep only the most recent N turns so the prompt doesn't balloon.
-        let start = history.len().saturating_sub(PROMPT_HISTORY_LIMIT);
-        Ok(history[start..].to_vec())
+        all.reverse(); // chronological
+
+        if all.len() <= PROMPT_HISTORY_LIMIT {
+            return Ok(HistoryWithSummary {
+                history: all,
+                summary: None,
+            });
+        }
+
+        let split = all.len() - PROMPT_HISTORY_LIMIT;
+        let older = &all[..split];
+        let summary = compress_history_pairs(older);
+        let recent = all[split..].to_vec();
+
+        // Async persistence: best-effort, never blocks the response path.
+        crate::ai::session_summary::store_summary_async(
+            self.pool.clone(),
+            household_id.to_string(),
+            household_id.to_string(), // session_id stand-in (Phase 1 single session per household)
+            summary.clone(),
+            now_ms,
+        );
+
+        Ok(HistoryWithSummary {
+            history: recent,
+            summary: Some(summary),
+        })
     }
+}
+
+struct HistoryWithSummary {
+    history: Vec<Message>,
+    summary: Option<String>,
+}
+
+/// Deterministic local compressor (T-067). Walks the older messages in
+/// chronological order, pairing user/AI turns into one-line summaries:
+///   "User asked: <first 80 chars>. AI answered: <first 80 chars>."
+/// An odd trailing message (no AI reply yet) gets summarized solo.
+fn compress_history_pairs(older: &[Message]) -> String {
+    const SNIPPET: usize = 80;
+    let mut lines: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < older.len() {
+        match (&older[i], older.get(i + 1)) {
+            (m, _) if matches!(m.role, Role::User) => {
+                let user_snip = snippet(&m.content, SNIPPET);
+                if let Some(next) = older.get(i + 1) {
+                    if matches!(next.role, Role::Assistant) {
+                        let ai_snip = snippet(&next.content, SNIPPET);
+                        lines.push(format!("User asked: {user_snip}. AI answered: {ai_snip}."));
+                        i += 2;
+                        continue;
+                    }
+                }
+                lines.push(format!("User asked: {user_snip}."));
+                i += 1;
+            }
+            (m, _) => {
+                // Bare assistant message (lost preceding user turn) — keep it.
+                let ai_snip = snippet(&m.content, SNIPPET);
+                lines.push(format!("AI said: {ai_snip}."));
+                i += 1;
+            }
+        }
+    }
+    lines.join(" ")
+}
+
+/// T-068 intent → snapshot scope. Record intents need full envelope detail
+/// because the user may target an envelope by name; everything else can
+/// drop envelopes entirely. Memory hints are gated separately at the call
+/// site (only Record intents pull them).
+fn scope_for(intent: IntentKind) -> SnapshotScope {
+    match intent {
+        IntentKind::RecordExpense | IntentKind::RecordIncome => SnapshotScope::Full,
+        _ => SnapshotScope::QueryBalance,
+    }
+}
+
+fn snippet(text: &str, max: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max {
+        return trimmed.to_string();
+    }
+    let cut: String = trimmed.chars().take(max).collect();
+    format!("{cut}…")
 }
 
 async fn lookup_account_names(
@@ -239,6 +350,76 @@ async fn load_sensitivity_and_tz(
 }
 
 #[cfg(test)]
+mod compressor_tests {
+    use super::*;
+
+    fn user(s: &str) -> Message { Message::user(s.to_string()) }
+    fn ai(s: &str) -> Message { Message::assistant(s.to_string()) }
+
+    #[test]
+    fn pairs_user_and_ai_into_one_line() {
+        let msgs = vec![user("balance?"), ai("$1,500.00")];
+        let s = compress_history_pairs(&msgs);
+        assert_eq!(s, "User asked: balance?. AI answered: $1,500.00.");
+    }
+
+    #[test]
+    fn truncates_long_messages_with_ellipsis() {
+        let long = "x".repeat(200);
+        let msgs = vec![user(&long), ai("ok")];
+        let s = compress_history_pairs(&msgs);
+        // 80 char snippet + ellipsis + suffix
+        assert!(s.contains(&"x".repeat(80)));
+        assert!(s.contains('…'));
+        assert!(s.contains("AI answered: ok"));
+    }
+
+    #[test]
+    fn handles_trailing_unanswered_user_turn() {
+        let msgs = vec![user("hi"), ai("hello"), user("balance?")];
+        let s = compress_history_pairs(&msgs);
+        assert!(s.contains("User asked: hi. AI answered: hello."));
+        assert!(s.ends_with("User asked: balance?."));
+    }
+
+    #[test]
+    fn handles_bare_assistant_message() {
+        // Edge case: an AI turn with no preceding user turn (e.g. proactive).
+        let msgs = vec![ai("Heads up!"), user("ok")];
+        let s = compress_history_pairs(&msgs);
+        assert!(s.starts_with("AI said: Heads up!."));
+        assert!(s.contains("User asked: ok."));
+    }
+
+    #[test]
+    fn empty_input_yields_empty_string() {
+        assert_eq!(compress_history_pairs(&[]), "");
+    }
+
+    /// T-068: Record intents must keep envelope detail (the prompt
+    /// references envelopes by name); everything else drops it.
+    #[test]
+    fn scope_for_record_intents_is_full() {
+        assert_eq!(scope_for(IntentKind::RecordExpense), SnapshotScope::Full);
+        assert_eq!(scope_for(IntentKind::RecordIncome), SnapshotScope::Full);
+    }
+
+    #[test]
+    fn scope_for_non_record_intents_skips_envelopes() {
+        for kind in [
+            IntentKind::QueryBalance,
+            IntentKind::QueryHistory,
+            IntentKind::BudgetManagement,
+            IntentKind::CorrectTransaction,
+            IntentKind::AccountManagement,
+            IntentKind::GeneralQuestion,
+        ] {
+            assert_eq!(scope_for(kind), SnapshotScope::QueryBalance, "{kind:?}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::ai::BuiltPrompt;
@@ -262,9 +443,12 @@ mod tests {
 
     #[async_trait]
     impl AiAdapter for MockAdapter {
-        async fn propose(&self, prompt: &BuiltPrompt) -> Result<TransactionProposal, AdapterError> {
+        async fn propose(&self, prompt: &BuiltPrompt) -> Result<ProposeResult, AdapterError> {
             *self.captured.lock().unwrap() = Some(prompt.clone());
-            Ok(self.proposal.lock().unwrap().clone())
+            Ok(ProposeResult {
+                proposal: self.proposal.lock().unwrap().clone(),
+                usage: AiUsage::default(),
+            })
         }
     }
 

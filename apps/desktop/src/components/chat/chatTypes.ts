@@ -50,6 +50,9 @@ export type ChatMessage =
       proposal?: TransactionProposal;
       /// Present after a failed commit; clears when the user retries.
       commit_error?: string;
+      /// Token usage from the AI call that produced this proposal (T-069).
+      /// Echoed back to commit_proposal so the resulting txn row is stamped.
+      ai_usage?: { input_tokens: number; output_tokens: number; cache_hit: boolean };
     }
   | {
       kind: "artifact";

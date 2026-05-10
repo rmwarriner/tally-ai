@@ -89,7 +89,7 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 - Stub Phase 2 extension points with clear TODO(phase2) comments.
 
-## Implementation status (as of 2026-05-09)
+## Implementation status (as of 2026-05-10)
 
 **Chat surface (T-033–T-039, T-044):**
 - Chat thread: message rendering by type, date separators, auto-scroll, new-message
@@ -186,6 +186,26 @@ a chat interface. There are no forms and no edit screens — all writes go throu
   full keyboard map (#128).
 - Doc-discipline rule (T-065) added: every `feat:` PR landing ticket work
   updates this Implementation status section. See CONTRIBUTING.md.
+
+**AI optimization (T-066–T-070):**
+- T-070 (tool definition): `proposal_tool()` JSON trimmed of restating-the-property-name descriptions; the test
+  `tool_definition_under_token_budget` fails CI if the serialized JSON exceeds 1400 chars (≈ 350 tokens via
+  the same `chars/4` rule used in `ai::prompt::approx_tokens`). Current: ~625 chars (~156 tokens).
+- T-066 (prompt caching): system prompt is sent as a content-block array with `cache_control: { type: "ephemeral" }`
+  on the BASE+SNAPSHOT chunk and on the tool definition. Anthropic returns ~10% billing for cached input on
+  repeat calls within the 5-minute TTL. Cache hits surface via `usage.cache_read_input_tokens > 0`.
+- T-069 (token tracking): migration 0010 adds `transactions.ai_input_tokens / ai_output_tokens / ai_cache_hit`.
+  `AiAdapter::propose` now returns `ProposeResult { proposal, usage: AiUsage }`. The orchestrator embeds the
+  usage in `MessageResponse::Proposal.ai_usage`; the frontend echoes it back to `commit_proposal`, which
+  calls `commands::stamp_ai_usage` to write the columns. Best-effort: a stamp failure does not roll back the
+  ledger commit.
+- T-067 (history compression): `PROMPT_HISTORY_LIMIT` dropped from 20 → 10. Older messages compress to a
+  deterministic one-line-per-pair summary (`compress_history_pairs`) which is prepended to the prompt
+  (`[Earlier conversation summary: ...]`) and persisted via `store_summary_async` for future reads. No second
+  Claude call — the compressor is local and free.
+- T-068 (intent-scoped loading): `SnapshotScope::{Full, QueryBalance}` decides whether to load envelope rows.
+  Record intents get the full snapshot; everything else skips envelopes. Payee memory hints are only loaded
+  for Record intents (which is also the only path that uses them).
 
 **Proactive engine (T-050–T-054):**
 - `core::insight` (T-053) is the gate + dedup layer for every proactive

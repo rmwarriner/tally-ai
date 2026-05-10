@@ -15,6 +15,15 @@ type CommitOutcome =
     }
   | { status: "rejected"; validation: unknown };
 
+/// Mirrors the Rust `AiUsage` shape (T-069). Echoed back from
+/// `useSendMessage`'s proposal response so commit_proposal can stamp
+/// `ai_input_tokens` / `ai_output_tokens` / `ai_cache_hit` on the row.
+export interface AiUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_hit: boolean;
+}
+
 export interface CommitProposalDeps {
   invoke?: typeof tauriInvoke;
 }
@@ -30,12 +39,12 @@ export function useCommitProposal(deps: CommitProposalDeps = {}) {
   const invalidateSidebar = useInvalidateSidebar();
 
   const commit = useCallback(
-    async (messageId: string, proposal: TransactionProposal) => {
+    async (messageId: string, proposal: TransactionProposal, ai_usage?: AiUsage) => {
       updateMessage(messageId, { commit_error: undefined });
 
       const r = await safeInvoke<CommitOutcome>(
         "commit_proposal",
-        { args: { proposal } },
+        { args: { proposal, ai_usage: ai_usage ?? null } },
         { invoke: deps.invoke },
       );
       if (!r.ok) {

@@ -98,13 +98,38 @@ impl FinancialSnapshot {
     }
 }
 
+/// T-068: scope hint for `build_snapshot_with_scope`. `QueryBalance` skips
+/// the envelope query (and serialization) since the rendered prompt only
+/// needs account balances. `Full` is the default for transaction-entry
+/// intents that may reference envelopes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotScope {
+    Full,
+    QueryBalance,
+}
+
 pub async fn build_snapshot(
     pool: &SqlitePool,
     household_id: &str,
     as_of_ms: i64,
 ) -> Result<FinancialSnapshot, sqlx::Error> {
+    build_snapshot_with_scope(pool, household_id, as_of_ms, SnapshotScope::Full).await
+}
+
+/// Same as `build_snapshot` but skips loading envelope periods for
+/// `QueryBalance` scope — the SQL roundtrip is cheap but the serialized
+/// envelope block is the heavier cost in tokens.
+pub async fn build_snapshot_with_scope(
+    pool: &SqlitePool,
+    household_id: &str,
+    as_of_ms: i64,
+    scope: SnapshotScope,
+) -> Result<FinancialSnapshot, sqlx::Error> {
     let balances = read_balances(pool, household_id).await?;
-    let envelopes = read_envelopes(pool, household_id, as_of_ms).await?;
+    let envelopes = match scope {
+        SnapshotScope::Full => read_envelopes(pool, household_id, as_of_ms).await?,
+        SnapshotScope::QueryBalance => Vec::new(),
+    };
     Ok(FinancialSnapshot {
         household_id: household_id.to_string(),
         as_of_ms,
