@@ -1,9 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useChatStore } from "../stores/chatStore";
+import { makeQueryWrapper } from "../test/queryWrapper";
 import { UNKNOWN_COMMAND_MESSAGE, dispatchSlashCommand, useSlashDispatch } from "./useSlashDispatch";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -12,15 +11,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 
-function makeWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return { queryClient, wrapper };
-}
+const makeWrapper = makeQueryWrapper;
 
 function makeDeps(overrides: Partial<Parameters<typeof dispatchSlashCommand>[2]> = {}) {
   return {

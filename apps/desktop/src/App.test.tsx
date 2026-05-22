@@ -1,6 +1,5 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock Tauri so the onboarding engine doesn't make real IPC calls in tests.
@@ -26,13 +25,14 @@ vi.mock("@tauri-apps/api/core", () => ({
 import App from "./App";
 import { useChatStore } from "./stores/chatStore";
 import { useOnboardingStore, getOnboardingInitialState } from "./stores/onboardingStore";
+import { makeQueryWrapper } from "./test/queryWrapper";
 
 function renderApp() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { wrapper: Wrapper } = makeQueryWrapper();
   return render(
-    <QueryClientProvider client={queryClient}>
+    <Wrapper>
       <App />
-    </QueryClientProvider>,
+    </Wrapper>,
   );
 }
 

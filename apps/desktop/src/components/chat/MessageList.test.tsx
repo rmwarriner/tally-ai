@@ -1,18 +1,13 @@
 import "@testing-library/jest-dom/vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type { ReactNode } from "react";
 
+import { makeQueryWrapper } from "../../test/queryWrapper";
 import { MessageList } from "./MessageList";
 import type { ChatMessage } from "./chatTypes";
 
 function makeWrapper() {
-  const queryClient = new QueryClient();
-  const Wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return Wrapper;
+  return makeQueryWrapper().wrapper;
 }
 
 function buildMessages(): ChatMessage[] {

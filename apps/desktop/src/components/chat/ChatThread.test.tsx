@@ -1,20 +1,16 @@
 import "@testing-library/jest-dom/vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { checkA11y, expectNoA11yViolations } from "../../test/axe";
+import { makeQueryWrapper } from "../../test/queryWrapper";
 import { ChatThread } from "./ChatThread";
 import type { ChatMessage } from "./chatTypes";
 import { useChatHistory } from "../../hooks/useChatHistory";
 import { useChatStore } from "../../stores/chatStore";
 
 function makeWrapper() {
-  const queryClient = new QueryClient();
-  return ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
+  return makeQueryWrapper().wrapper;
 }
 
 vi.mock("../../hooks/useChatHistory", () => ({
