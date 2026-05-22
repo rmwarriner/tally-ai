@@ -226,3 +226,71 @@ export interface ImportReceipt {
   transactions_committed: number;
   transactions_skipped: number;
 }
+
+// ── QIF import types (Tier 7) ─────────────────────────────────────────────
+
+export interface QifPreview {
+  account_count: number;
+  transaction_count: number;
+  split_count: number;
+  transfer_count: number;
+  skipped_security_trades: number;
+}
+
+export interface QifAccountMapping {
+  qif_name: string;
+  tally_account_id: string;
+  tally_name: string;
+  tally_type: ImportAccountType;
+  tally_normal_balance: NormalBalance;
+}
+
+export interface QifPlannedLine {
+  tally_account_id: string;
+  amount_cents: number;
+  side: JournalSide;
+}
+
+export interface QifPlannedTransaction {
+  source_ref: string;
+  txn_date: number;
+  memo: string | null;
+  lines: QifPlannedLine[];
+}
+
+export interface QifImportPlan {
+  household_id: string;
+  import_id: string;
+  account_mappings: QifAccountMapping[];
+  transactions: QifPlannedTransaction[];
+}
+
+export type QifMappingEdit =
+  | {
+      ChangeType: {
+        qif_name: string;
+        new_type: ImportAccountType;
+        new_normal_balance: NormalBalance;
+      };
+    }
+  | { Rename: { qif_name: string; new_tally_name: string } };
+
+export interface QifImportReceipt {
+  import_id: string;
+  accounts_created: number;
+  transactions_committed: number;
+  transactions_skipped: number;
+  skipped_security_trades: number;
+}
+
+export interface QifBalanceRow {
+  account_name: string;
+  tally_cents: number;
+  declared_cents: number;
+  matches: boolean;
+}
+
+export interface QifBalanceReportArtifact {
+  rows: QifBalanceRow[];
+  total_mismatches: number;
+}

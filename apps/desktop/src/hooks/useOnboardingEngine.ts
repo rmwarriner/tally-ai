@@ -1,7 +1,19 @@
 import type { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo } from "react";
 
-import type { GnuCashPreview, ImportPlan, ImportReceipt, MappingEdit, ImportAccountType, NormalBalance } from "@tally/core-types";
+import type {
+  GnuCashPreview,
+  ImportPlan,
+  ImportReceipt,
+  MappingEdit,
+  ImportAccountType,
+  NormalBalance,
+  QifBalanceReportArtifact,
+  QifImportPlan,
+  QifImportReceipt,
+  QifMappingEdit,
+  QifPreview,
+} from "@tally/core-types";
 import type { SetupCardVariant } from "../components/onboarding/SetupCard";
 import type { GnuCashReconcileReport } from "../components/artifacts/GnuCashReconcileCard";
 import { safeInvoke } from "../lib/safeInvoke";
@@ -34,6 +46,8 @@ export interface OnboardingDeps {
   ) => void;
   addGnuCashMappingMessage: (plan: ImportPlan) => void;
   addGnuCashReconcileMessage: (report: GnuCashReconcileReport) => void;
+  addQifMappingMessage: (plan: QifImportPlan, skippedSecurityTrades: number) => void;
+  addQifReconcileMessage: (report: QifBalanceReportArtifact) => void;
   invoke?: typeof tauriInvoke;
   invalidateSidebar: () => void | Promise<void>;
   readGnuCashFile: (path: string) => Promise<GnuCashPreview>;
@@ -42,6 +56,12 @@ export interface OnboardingDeps {
   commitGnuCashImport: () => Promise<ImportReceipt>;
   reconcileGnuCashImport: (importId: string, path: string) => Promise<GnuCashReconcileReport>;
   rollbackGnuCashImport: (importId: string) => Promise<void>;
+  readQifFile: (path: string) => Promise<QifPreview>;
+  qifBuildDefaultPlan: (path: string) => Promise<QifImportPlan>;
+  qifApplyMappingEdit: (edit: QifMappingEdit) => Promise<QifImportPlan>;
+  commitQifImport: () => Promise<QifImportReceipt>;
+  reconcileQifImport: (importId: string, path: string) => Promise<QifBalanceReportArtifact>;
+  rollbackQifImport: (importId: string) => Promise<void>;
 }
 
 const STARTER_PROMPTS = [
@@ -87,6 +107,29 @@ function errorDetail(err: unknown): string {
   }
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+function parseQifMappingEdit(text: string): QifMappingEdit | null {
+  const changeType = text.match(
+    /make\s+(\S+(?:\s+\S+)*?)\s+(?:an?\s+)?(asset|liability|income|expense|equity)\b/i,
+  );
+  if (changeType) {
+    const [, name, type] = changeType;
+    if (!isValidAccountName(name)) return null;
+    const new_type = type.toLowerCase() as ImportAccountType;
+    const new_normal_balance: NormalBalance =
+      new_type === "asset" || new_type === "expense" ? "debit" : "credit";
+    return {
+      ChangeType: { qif_name: name.trim(), new_type, new_normal_balance },
+    };
+  }
+  const rename = text.match(/rename\s+(\S+(?:\s+\S+)*?)\s+to\s+(.+)/i);
+  if (rename) {
+    const [, name, newName] = rename;
+    if (!isValidAccountName(name)) return null;
+    return { Rename: { qif_name: name.trim(), new_tally_name: newName.trim() } };
+  }
+  return null;
 }
 
 function parseMappingEdit(text: string): MappingEdit | null {
@@ -437,6 +480,19 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
           );
           return;
         }
+        if (/banktivity|quicken|\bqif\b/i.test(text)) {
+          store.getState().setPhase("qif_import_pick_file");
+          deps.addSetupCard(
+            "qif_file_picker",
+            "Import from QIF",
+            "Select your QIF export (Banktivity, Quicken, etc.) to get started",
+          );
+          deps.addSystemMessage(
+            "Great! Paste the path to your QIF file using the picker above.",
+            "info",
+          );
+          return;
+        }
         if (lower.includes("fresh") || lower.includes("start")) {
           store.getState().setPhase("fresh_start");
           deps.addSystemMessage(
@@ -508,6 +564,49 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
         return;
       }
 
+      case "qif_import_pick_file":
+        return;
+
+      case "qif_import_mapping": {
+        const trimmed = text.trim().toLowerCase();
+        if (trimmed === "cancel") {
+          store.getState().setQifPickedPath(null);
+          store.getState().setPhase("qif_import_pick_file");
+          deps.addSystemMessage("Cancelled. Pick a QIF file to try again.", "info");
+          return;
+        }
+        const edit = parseQifMappingEdit(text);
+        if (edit) {
+          const updatedPlan = await deps.qifApplyMappingEdit(edit);
+          deps.addQifMappingMessage(updatedPlan, 0);
+        } else {
+          deps.addSystemMessage(
+            "Try: 'make Groceries a liability' or 'rename Groceries to Food'",
+            "info",
+          );
+        }
+        return;
+      }
+
+      case "qif_import_committing":
+        return;
+
+      case "qif_import_reconciling": {
+        const t2 = text.trim().toLowerCase();
+        if (t2 === "continue" || t2 === "keep") {
+          await handleAcceptQifReconcile();
+        } else if (t2 === "rollback" || t2 === "roll back" || t2 === "cancel") {
+          await handleRollbackQifReconcile();
+        } else {
+          deps.addSystemMessage(
+            "Type 'continue' to keep the import, or 'rollback' to undo it.",
+            "info",
+          );
+        }
+        return;
+      }
+
+      case "qif_import_done":
       case "gnucash_import_done":
       case "checking":
       case "complete":
@@ -585,11 +684,95 @@ export function buildOnboardingHandler(deps: OnboardingDeps) {
     store.getState().setPhase("gnucash_import_pick_file");
   }
 
+  async function handleQifFilePicked(path: string): Promise<void> {
+    let preview: QifPreview;
+    try {
+      preview = await deps.readQifFile(path);
+    } catch (err) {
+      deps.addSystemMessage(
+        `I couldn't read that QIF file: ${errorDetail(err)}`,
+        "error",
+      );
+      return;
+    }
+    store.getState().setQifPickedPath(path);
+    const plan = await deps.qifBuildDefaultPlan(path);
+    deps.addQifMappingMessage(plan, preview.skipped_security_trades);
+    store.getState().setPhase("qif_import_mapping");
+  }
+
+  async function handleConfirmQifMapping(): Promise<void> {
+    store.getState().setPhase("qif_import_committing");
+    let receipt: QifImportReceipt;
+    try {
+      receipt = await deps.commitQifImport();
+    } catch {
+      deps.addSystemMessage(
+        "I couldn't commit the QIF import. Your data hasn't changed. You can try again, or type 'cancel' to pick a different file.",
+        "error",
+      );
+      store.getState().setPhase("qif_import_mapping");
+      return;
+    }
+    store.getState().setQifImportId(receipt.import_id);
+    deps.addSystemMessage("Import committed. Checking balances against the QIF file…", "info");
+    store.getState().setPhase("qif_import_reconciling");
+    await deps.invalidateSidebar();
+    const pickedPath = store.getState().qifPickedPath ?? "";
+    try {
+      const report = await deps.reconcileQifImport(receipt.import_id, pickedPath);
+      deps.addQifReconcileMessage(report);
+    } catch {
+      deps.addSystemMessage(
+        "Import committed, but I couldn't compare balances against the QIF file. You can keep the import by typing 'continue', or type 'rollback' to undo it.",
+        "error",
+      );
+    }
+  }
+
+  async function handleAcceptQifReconcile(): Promise<void> {
+    const { householdName, accounts, envelopes } = store.getState().draft;
+    deps.addHandoffMessage(
+      householdName || "Your household",
+      accounts.length,
+      envelopes.length,
+      STARTER_PROMPTS,
+    );
+    store.getState().setPhase("qif_import_done");
+  }
+
+  async function handleRollbackQifReconcile(): Promise<void> {
+    const importId = store.getState().qifImportId;
+    if (importId) {
+      await deps.rollbackQifImport(importId);
+    }
+    store.getState().setQifImportId(null);
+    store.getState().setQifPickedPath(null);
+    deps.addSystemMessage(
+      "Import rolled back. Pick a QIF file to try again, or skip migration.",
+      "info",
+    );
+    store.getState().setPhase("qif_import_pick_file");
+    await deps.invalidateSidebar();
+  }
+
   function phase() {
     return store.getState().phase;
   }
 
-  return { checkAndStart, handleInput, handleFilePicked, handleConfirmMapping, handleAcceptReconcile, handleRollbackReconcile, phase };
+  return {
+    checkAndStart,
+    handleInput,
+    handleFilePicked,
+    handleConfirmMapping,
+    handleAcceptReconcile,
+    handleRollbackReconcile,
+    handleQifFilePicked,
+    handleConfirmQifMapping,
+    handleAcceptQifReconcile,
+    handleRollbackQifReconcile,
+    phase,
+  };
 }
 
 export function useOnboardingEngine() {
@@ -598,6 +781,8 @@ export function useOnboardingEngine() {
   const addHandoffMessage = useChatStore((s) => s.addHandoffMessage);
   const addGnuCashMappingMessage = useChatStore((s) => s.addGnuCashMappingMessage);
   const addGnuCashReconcileMessage = useChatStore((s) => s.addGnuCashReconcileMessage);
+  const addQifMappingMessage = useChatStore((s) => s.addQifMappingMessage);
+  const addQifReconcileMessage = useChatStore((s) => s.addQifReconcileMessage);
   const phase = useOnboardingStore((s) => s.phase);
   const invalidateSidebar = useInvalidateSidebar();
 
@@ -627,6 +812,37 @@ export function useOnboardingEngine() {
     [],
   );
 
+  const readQifFile = useCallback(
+    (path: string) => invokeOrThrow<QifPreview>(undefined, "read_qif_file", { path }),
+    [],
+  );
+  const qifBuildDefaultPlan = useCallback(
+    (path: string) => invokeOrThrow<QifImportPlan>(undefined, "qif_build_default_plan", { path }),
+    [],
+  );
+  const qifApplyMappingEdit = useCallback(
+    (edit: QifMappingEdit) =>
+      invokeOrThrow<QifImportPlan>(undefined, "qif_apply_mapping_edit", { edit }),
+    [],
+  );
+  const commitQifImport = useCallback(
+    () => invokeOrThrow<QifImportReceipt>(undefined, "commit_qif_import", {}),
+    [],
+  );
+  const reconcileQifImport = useCallback(
+    (importId: string, path: string) =>
+      invokeOrThrow<QifBalanceReportArtifact>(undefined, "reconcile_qif_import", {
+        import_id: importId,
+        path,
+      }),
+    [],
+  );
+  const rollbackQifImport = useCallback(
+    (importId: string) =>
+      invokeOrThrow<void>(undefined, "rollback_qif_import", { import_id: importId }),
+    [],
+  );
+
   const deps: OnboardingDeps = useMemo(
     () => ({
       addSystemMessage,
@@ -634,6 +850,8 @@ export function useOnboardingEngine() {
       addHandoffMessage,
       addGnuCashMappingMessage,
       addGnuCashReconcileMessage,
+      addQifMappingMessage,
+      addQifReconcileMessage,
       invalidateSidebar,
       readGnuCashFile,
       gnucashBuildDefaultPlan,
@@ -641,6 +859,12 @@ export function useOnboardingEngine() {
       commitGnuCashImport,
       reconcileGnuCashImport,
       rollbackGnuCashImport,
+      readQifFile,
+      qifBuildDefaultPlan,
+      qifApplyMappingEdit,
+      commitQifImport,
+      reconcileQifImport,
+      rollbackQifImport,
     }),
     [
       addSystemMessage,
@@ -648,6 +872,8 @@ export function useOnboardingEngine() {
       addHandoffMessage,
       addGnuCashMappingMessage,
       addGnuCashReconcileMessage,
+      addQifMappingMessage,
+      addQifReconcileMessage,
       invalidateSidebar,
       readGnuCashFile,
       gnucashBuildDefaultPlan,
@@ -655,6 +881,12 @@ export function useOnboardingEngine() {
       commitGnuCashImport,
       reconcileGnuCashImport,
       rollbackGnuCashImport,
+      readQifFile,
+      qifBuildDefaultPlan,
+      qifApplyMappingEdit,
+      commitQifImport,
+      reconcileQifImport,
+      rollbackQifImport,
     ],
   );
 
@@ -671,5 +903,9 @@ export function useOnboardingEngine() {
     handleConfirmMapping: handler.handleConfirmMapping,
     handleAcceptReconcile: handler.handleAcceptReconcile,
     handleRollbackReconcile: handler.handleRollbackReconcile,
+    handleQifFilePicked: handler.handleQifFilePicked,
+    handleConfirmQifMapping: handler.handleConfirmQifMapping,
+    handleAcceptQifReconcile: handler.handleAcceptQifReconcile,
+    handleRollbackQifReconcile: handler.handleRollbackQifReconcile,
   };
 }

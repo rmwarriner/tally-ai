@@ -5,6 +5,8 @@ import { useChatStore } from "../../stores/chatStore";
 import { ArtifactCard } from "../artifacts/ArtifactCard";
 import { GnuCashMappingCard } from "../artifacts/GnuCashMappingCard";
 import { GnuCashReconcileCard } from "../artifacts/GnuCashReconcileCard";
+import { QifMappingCard } from "../artifacts/QifMappingCard";
+import { QifReconcileCard } from "../artifacts/QifReconcileCard";
 import { HandoffMessage } from "../onboarding/HandoffMessage";
 import { SetupCard } from "../onboarding/SetupCard";
 import { AIMessage } from "./AIMessage";
@@ -20,9 +22,13 @@ interface MessageListProps {
   messages: ChatMessage[];
   onPromptClick?: (prompt: string) => void;
   onSubmitGnuCashPath?: (path: string) => void;
+  onSubmitQifPath?: (path: string) => void;
   onConfirmMapping?: () => void;
   onAcceptReconcile?: () => void;
   onRollbackReconcile?: () => void;
+  onConfirmQifMapping?: () => void;
+  onAcceptQifReconcile?: () => void;
+  onRollbackQifReconcile?: () => void;
 }
 
 interface TransactionMessageProps {
@@ -97,14 +103,29 @@ function formatDateLabel(ts: number, now: Date): string {
 interface RenderOptions {
   onPromptClick?: (prompt: string) => void;
   onSubmitGnuCashPath?: (path: string) => void;
+  onSubmitQifPath?: (path: string) => void;
   onConfirmMapping?: () => void;
   onAcceptReconcile?: () => void;
   onRollbackReconcile?: () => void;
+  onConfirmQifMapping?: () => void;
+  onAcceptQifReconcile?: () => void;
+  onRollbackQifReconcile?: () => void;
   addSystemMessage: (text: string, tone?: "info" | "error") => void;
 }
 
 function renderMessage(message: ChatMessage, opts: RenderOptions) {
-  const { onPromptClick, onSubmitGnuCashPath, onConfirmMapping, onAcceptReconcile, onRollbackReconcile, addSystemMessage } = opts;
+  const {
+    onPromptClick,
+    onSubmitGnuCashPath,
+    onSubmitQifPath,
+    onConfirmMapping,
+    onAcceptReconcile,
+    onRollbackReconcile,
+    onConfirmQifMapping,
+    onAcceptQifReconcile,
+    onRollbackQifReconcile,
+    addSystemMessage,
+  } = opts;
   switch (message.kind) {
     case "user":
       return <UserMessage text={message.text} />;
@@ -144,6 +165,7 @@ function renderMessage(message: ChatMessage, opts: RenderOptions) {
           title={message.title}
           detail={message.detail}
           onSubmitGnuCashPath={onSubmitGnuCashPath}
+          onSubmitQifPath={onSubmitQifPath}
         />
       );
     case "handoff":
@@ -177,12 +199,45 @@ function renderMessage(message: ChatMessage, opts: RenderOptions) {
           onRollback={onRollbackReconcile ?? (() => undefined)}
         />
       );
+    case "qif_mapping":
+      return (
+        <QifMappingCard
+          plan={message.plan}
+          skippedSecurityTrades={message.skippedSecurityTrades}
+          onConfirm={onConfirmQifMapping ?? (() => undefined)}
+          onRequestEdit={() => {
+            addSystemMessage(
+              "Type 'make <account> a <type>' or 'rename <account> to <new name>' to edit the mapping.",
+              "info",
+            );
+          }}
+        />
+      );
+    case "qif_reconcile":
+      return (
+        <QifReconcileCard
+          report={message.report}
+          onAccept={onAcceptQifReconcile ?? (() => undefined)}
+          onRollback={onRollbackQifReconcile ?? (() => undefined)}
+        />
+      );
     default:
       return null;
   }
 }
 
-export function MessageList({ messages, onPromptClick, onSubmitGnuCashPath, onConfirmMapping, onAcceptReconcile, onRollbackReconcile }: MessageListProps) {
+export function MessageList({
+  messages,
+  onPromptClick,
+  onSubmitGnuCashPath,
+  onSubmitQifPath,
+  onConfirmMapping,
+  onAcceptReconcile,
+  onRollbackReconcile,
+  onConfirmQifMapping,
+  onAcceptQifReconcile,
+  onRollbackQifReconcile,
+}: MessageListProps) {
   const addSystemMessage = useChatStore((s) => s.addSystemMessage);
   const sorted = [...messages].sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id));
   const now = new Date();
@@ -190,9 +245,13 @@ export function MessageList({ messages, onPromptClick, onSubmitGnuCashPath, onCo
   const opts: RenderOptions = {
     onPromptClick,
     onSubmitGnuCashPath,
+    onSubmitQifPath,
     onConfirmMapping,
     onAcceptReconcile,
     onRollbackReconcile,
+    onConfirmQifMapping,
+    onAcceptQifReconcile,
+    onRollbackQifReconcile,
     addSystemMessage,
   };
 

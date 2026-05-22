@@ -67,6 +67,38 @@ function makeDeps(overrides: Partial<OnboardingDeps> = {}): OnboardingDeps {
     }),
     reconcileGnuCashImport: vi.fn().mockResolvedValue(MOCK_RECONCILE_REPORT),
     rollbackGnuCashImport: vi.fn().mockResolvedValue(undefined),
+    addQifMappingMessage: vi.fn(),
+    addQifReconcileMessage: vi.fn(),
+    readQifFile: vi.fn().mockResolvedValue({
+      account_count: 0,
+      transaction_count: 0,
+      split_count: 0,
+      transfer_count: 0,
+      skipped_security_trades: 0,
+    }),
+    qifBuildDefaultPlan: vi.fn().mockResolvedValue({
+      household_id: "hh",
+      import_id: "imp",
+      account_mappings: [],
+      transactions: [],
+    }),
+    qifApplyMappingEdit: vi.fn().mockResolvedValue({
+      household_id: "hh",
+      import_id: "imp",
+      account_mappings: [],
+      transactions: [],
+    }),
+    commitQifImport: vi.fn().mockResolvedValue({
+      import_id: "imp",
+      accounts_created: 0,
+      transactions_committed: 0,
+      transactions_skipped: 0,
+      skipped_security_trades: 0,
+    }),
+    reconcileQifImport: vi
+      .fn()
+      .mockResolvedValue({ rows: [], total_mismatches: 0 }),
+    rollbackQifImport: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -876,5 +908,189 @@ describe("sidebar invalidation", () => {
     // One invalidation per write: create_household, create_account,
     // set_opening_balance, create_envelope = 4 writes total for the fresh path.
     expect(invalidateSidebar).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("QIF migration branch (Tier 7)", () => {
+  beforeEach(() => {
+    useOnboardingStore.getState().setPhase("path_select");
+  });
+
+  it("routes 'banktivity' to the qif file picker", async () => {
+    const addSetupCard = vi.fn();
+    const deps = makeDeps({ addSetupCard });
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("import from banktivity");
+    expect(useOnboardingStore.getState().phase).toBe("qif_import_pick_file");
+    expect(addSetupCard).toHaveBeenCalledWith(
+      "qif_file_picker",
+      expect.any(String),
+      expect.any(String),
+    );
+  });
+
+  it("routes plain 'qif' to the qif file picker", async () => {
+    const deps = makeDeps();
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("I have a qif file");
+    expect(useOnboardingStore.getState().phase).toBe("qif_import_pick_file");
+  });
+
+  it("loads a plan and shows the mapping card after file pick", async () => {
+    const addQifMappingMessage = vi.fn();
+    const deps = makeDeps({
+      addQifMappingMessage,
+      readQifFile: vi.fn().mockResolvedValue({
+        account_count: 1,
+        transaction_count: 2,
+        split_count: 0,
+        transfer_count: 0,
+        skipped_security_trades: 4,
+      }),
+    });
+    useOnboardingStore.getState().setPhase("qif_import_pick_file");
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleQifFilePicked("/tmp/test.qif");
+    expect(useOnboardingStore.getState().phase).toBe("qif_import_mapping");
+    expect(useOnboardingStore.getState().qifPickedPath).toBe("/tmp/test.qif");
+    expect(addQifMappingMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ household_id: "hh" }),
+      4,
+    );
+  });
+
+  it("commit success advances to reconciling and posts the reconcile card", async () => {
+    const addQifReconcileMessage = vi.fn();
+    const commitQifImport = vi.fn().mockResolvedValue({
+      import_id: "imp-q1",
+      accounts_created: 1,
+      transactions_committed: 1,
+      transactions_skipped: 0,
+      skipped_security_trades: 0,
+    });
+    const deps = makeDeps({ addQifReconcileMessage, commitQifImport });
+    useOnboardingStore.getState().setPhase("qif_import_mapping");
+    useOnboardingStore.getState().setQifPickedPath("/tmp/q.qif");
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleConfirmQifMapping();
+    expect(useOnboardingStore.getState().phase).toBe("qif_import_reconciling");
+    expect(useOnboardingStore.getState().qifImportId).toBe("imp-q1");
+    expect(addQifReconcileMessage).toHaveBeenCalled();
+  });
+
+  it("rollback clears state and returns to file picker", async () => {
+    const rollbackQifImport = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps({ rollbackQifImport });
+    useOnboardingStore.getState().setQifImportId("imp-q1");
+    useOnboardingStore.getState().setQifPickedPath("/tmp/q.qif");
+    useOnboardingStore.getState().setPhase("qif_import_reconciling");
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleRollbackQifReconcile();
+    expect(rollbackQifImport).toHaveBeenCalledWith("imp-q1");
+    expect(useOnboardingStore.getState().qifImportId).toBeNull();
+    expect(useOnboardingStore.getState().phase).toBe("qif_import_pick_file");
+  });
+
+  it("parses ChangeType mapping edits and applies them", async () => {
+    const qifApplyMappingEdit = vi.fn().mockResolvedValue({
+      household_id: "hh",
+      import_id: "imp",
+      account_mappings: [],
+      transactions: [],
+    });
+    const deps = makeDeps({ qifApplyMappingEdit });
+    useOnboardingStore.getState().setPhase("qif_import_mapping");
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("make Groceries a liability");
+    expect(qifApplyMappingEdit).toHaveBeenCalledWith({
+      ChangeType: {
+        qif_name: "Groceries",
+        new_type: "liability",
+        new_normal_balance: "credit",
+      },
+    });
+  });
+
+  it("cancel in mapping returns to file picker", async () => {
+    useOnboardingStore.getState().setPhase("qif_import_mapping");
+    useOnboardingStore.getState().setQifPickedPath("/x");
+    const handler = buildOnboardingHandler(makeDeps());
+    await handler.handleInput("cancel");
+    expect(useOnboardingStore.getState().phase).toBe("qif_import_pick_file");
+    expect(useOnboardingStore.getState().qifPickedPath).toBeNull();
+  });
+
+  it("parses Rename mapping edits", async () => {
+    const qifApplyMappingEdit = vi.fn().mockResolvedValue({
+      household_id: "hh",
+      import_id: "imp",
+      account_mappings: [],
+      transactions: [],
+    });
+    const deps = makeDeps({ qifApplyMappingEdit });
+    useOnboardingStore.getState().setPhase("qif_import_mapping");
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleInput("rename Foo to Bar");
+    expect(qifApplyMappingEdit).toHaveBeenCalledWith({
+      Rename: { qif_name: "Foo", new_tally_name: "Bar" },
+    });
+  });
+
+  it("unparseable mapping input prompts for help", async () => {
+    const addSystemMessage = vi.fn();
+    useOnboardingStore.getState().setPhase("qif_import_mapping");
+    const handler = buildOnboardingHandler(makeDeps({ addSystemMessage }));
+    await handler.handleInput("hello there");
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("make"),
+      "info",
+    );
+  });
+
+  it("reconciling phase routes 'continue' to accept", async () => {
+    const addHandoffMessage = vi.fn();
+    useOnboardingStore.getState().setPhase("qif_import_reconciling");
+    const handler = buildOnboardingHandler(makeDeps({ addHandoffMessage }));
+    await handler.handleInput("continue");
+    expect(addHandoffMessage).toHaveBeenCalled();
+    expect(useOnboardingStore.getState().phase).toBe("qif_import_done");
+  });
+
+  it("reconciling phase routes 'rollback' to rollback handler", async () => {
+    const rollbackQifImport = vi.fn().mockResolvedValue(undefined);
+    useOnboardingStore.getState().setQifImportId("imp-x");
+    useOnboardingStore.getState().setPhase("qif_import_reconciling");
+    const handler = buildOnboardingHandler(makeDeps({ rollbackQifImport }));
+    await handler.handleInput("rollback");
+    expect(rollbackQifImport).toHaveBeenCalledWith("imp-x");
+  });
+
+  it("commit failure returns to mapping phase with error system message", async () => {
+    const addSystemMessage = vi.fn();
+    const commitQifImport = vi.fn().mockRejectedValue(new Error("boom"));
+    const deps = makeDeps({ addSystemMessage, commitQifImport });
+    useOnboardingStore.getState().setPhase("qif_import_mapping");
+    useOnboardingStore.getState().setQifPickedPath("/x");
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleConfirmQifMapping();
+    expect(useOnboardingStore.getState().phase).toBe("qif_import_mapping");
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("couldn't commit"),
+      "error",
+    );
+  });
+
+  it("read failure surfaces as a system error and stays in pick_file", async () => {
+    const addSystemMessage = vi.fn();
+    const readQifFile = vi.fn().mockRejectedValue({ message: "bad file" });
+    const deps = makeDeps({ addSystemMessage, readQifFile });
+    useOnboardingStore.getState().setPhase("qif_import_pick_file");
+    const handler = buildOnboardingHandler(deps);
+    await handler.handleQifFilePicked("/tmp/bad.qif");
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("couldn't read"),
+      "error",
+    );
+    expect(useOnboardingStore.getState().phase).toBe("qif_import_pick_file");
   });
 });

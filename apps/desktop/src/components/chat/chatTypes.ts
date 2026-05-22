@@ -4,7 +4,12 @@ import type {
 } from "./TransactionCard.types";
 
 import type { SetupCardVariant } from "../onboarding/SetupCard";
-import type { ImportPlan, RecoveryAction } from "@tally/core-types";
+import type {
+  ImportPlan,
+  QifBalanceReportArtifact,
+  QifImportPlan,
+  RecoveryAction,
+} from "@tally/core-types";
 import type { GnuCashReconcileReport } from "../artifacts/GnuCashReconcileCard";
 
 export interface ProposedLine {
@@ -90,4 +95,17 @@ export type ChatMessage =
       id: string;
       ts: number;
       report: GnuCashReconcileReport;
+    }
+  | {
+      kind: "qif_mapping";
+      id: string;
+      ts: number;
+      plan: QifImportPlan;
+      skippedSecurityTrades: number;
+    }
+  | {
+      kind: "qif_reconcile";
+      id: string;
+      ts: number;
+      report: QifBalanceReportArtifact;
     };

@@ -59,6 +59,10 @@ export default function App() {
           onConfirmMapping={onboarding.handleConfirmMapping}
           onAcceptReconcile={onboarding.handleAcceptReconcile}
           onRollbackReconcile={onboarding.handleRollbackReconcile}
+          onSubmitQifPath={onboarding.handleQifFilePicked}
+          onConfirmQifMapping={onboarding.handleConfirmQifMapping}
+          onAcceptQifReconcile={onboarding.handleAcceptQifReconcile}
+          onRollbackQifReconcile={onboarding.handleRollbackQifReconcile}
         />
         <InputBar onSend={onSend} isStreaming={false} />
       </main>

@@ -89,7 +89,7 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 - Stub Phase 2 extension points with clear TODO(phase2) comments.
 
-## Implementation status (as of 2026-05-10, Phase 2 in progress)
+## Implementation status (as of 2026-05-22, Phase 2 in progress)
 
 **Chat surface (T-033–T-039, T-044):**
 - Chat thread: message rendering by type, date separators, auto-scroll, new-message
@@ -282,6 +282,74 @@ a chat interface. There are no forms and no edit screens — all writes go throu
   message carrying the **same** user-facing text — refactor that breaks
   either side now fails loud.
 
+**Phase 2 Tier 7 — QIF import (#148):**
+- Real Banktivity-flavored QIF parser at `core::import::qif`. Four-phase pipeline
+  (reader → mapper → committer → reconciler) mirrors the GnuCash importer.
+- Reader (`reader.rs`): line-oriented state machine. Modes: `Initial`,
+  `BalancesList` (the `!Option:AutoSwitch` ... `!Clear:AutoSwitch` block listing
+  every account with declared balance), `Categories` (`!Type:Cat` block),
+  `ContextRecord` (`!Account` then N/T for the next txn section), `TxnList`
+  (`!Type:Bank|CCard|Invst|Oth A|Oth L|...`). Field meanings depend on mode —
+  `T` is account type in BalancesList/ContextRecord but transaction amount in
+  TxnList. `M/D/YY` dates with 50-99 → 19XX, 00-49 → 20XX pivot. Comma-thousands
+  amounts (`T16,516.60`) parsed by stripping commas and splitting on `.` — no
+  f64 in the money path. Investment NCash kept as transfer; `NBuy/NSell` security
+  trades skipped and counted (`skipped_security_trades`).
+- Banktivity quirks handled: lone `$<amount>` after `L[X]` on investment NCash
+  is the *transfer-side amount* (different from `T` when the other side has
+  splits) — ignored, not treated as a split. Splits use bare `S<AccountName>`
+  (no brackets) to reference real accounts; the mapper detects name-collision
+  with QIF accounts and treats the split as a transfer rather than synthesizing
+  a duplicate. Custom `T401k/403B` account type maps to `Retirement`.
+- Mapper (`mapper.rs`): pure logic, ULIDs injected. Synthesizes one
+  Income/Expense account per used category and a top-level
+  `Equity:Opening Balance` for `STARTING BALANCE` payee. Splits with mixed
+  signs (e.g. `$-21.64` Hat + `$12.29` points-refund inside a `T-9.35` Amazon
+  txn) generate per-split lines with side determined by whether each split's
+  sign matches T's. `apply_mapping_edit` + `find_duplicate_names` mirror the
+  GnuCash API.
+- Transfer-pair dedup: Banktivity exports every transfer on both sides
+  (`L[B]` in account A AND `L[A]` in account B). Mapper drops the
+  alphabetically-greater side for pure transfer txns (no splits, just L[X])
+  to avoid double-counting in Tally. Split-level transfer dedup is a known
+  follow-up.
+- Committer (`committer.rs`): single SQL transaction wraps every insert.
+  Idempotency on `(household_id, source_ref)` (reuses migration 0006 column).
+  Rollback by `import_id` (reuses 0006). source_ref format:
+  `qif:{account}|{date_ms}|{amount_cents}|{payee}|{memo}` — deterministic,
+  no hash deps required. Writes `audit_log` rows for every committed
+  transaction (closes the gap the GnuCash committer left open).
+- Reconciler (`reconcile.rs`): post-commit, sums `journal_lines.amount`
+  per account by side and compares to the QIF `B<balance>` field. Mismatches
+  surface in the `QifBalanceReportArtifact` for the user to accept or roll
+  back. Investment accounts will show non-zero diffs by design — those map
+  to the skipped security trades.
+- Tauri commands: `read_qif_file`, `qif_build_default_plan`,
+  `qif_apply_mapping_edit`, `commit_qif_import`, `rollback_qif_import`,
+  `reconcile_qif_import`. `AppState` gains `active_qif_import` +
+  `active_qif_skipped_trades` slots.
+- Frontend: `QifMappingCard` and `QifReconcileCard` mirror their GnuCash
+  counterparts (share the same CSS modules). New chat message kinds
+  `qif_mapping` + `qif_reconcile`. Onboarding engine routes `banktivity`,
+  `quicken`, or `qif` keywords from path_select into the QIF flow; phases
+  `qif_import_pick_file` → `qif_import_mapping` → `qif_import_committing`
+  → `qif_import_reconciling` → `qif_import_done` mirror the GnuCash state
+  machine. Same `make X a Y` / `rename X to Y` chat-edit syntax.
+- Smoke-tested against a real 6,499-line Banktivity export: 21 accounts,
+  654 transactions, 473 splits, 181 transfers; 18 of 21 declared balances
+  reconcile to the cent. The 3 mismatches are all investment accounts —
+  expected because security trades are skipped.
+- Test coverage: 19 reader tests, 11 mapper tests, 5 committer tests
+  (including audit-log assertion), 2 reconciler tests, 3 end-to-end
+  integration tests in `src-tauri/tests/qif_import_integration.rs`.
+  Vitest covers QifMappingCard, QifReconcileCard, and 12 onboarding-engine
+  paths (routing, mapping edits, commit success, commit failure, read
+  failure, accept/rollback).
+- Known limitations (deferred to follow-ups): individual security-trade
+  import (currently skipped), foreign-currency QIF files, multi-account
+  Quicken-style split-flat transfers where the counterpart is inside a
+  paycheck split, memorized transactions.
+
 **Phase 2 Tier 1 — security hardening (#142, #143):**
 - CSPRNG (#142): `commands::create_household` now uses
   `crate::crypto::generate_salt` (rand crate's thread RNG, CSPRNG-quality)
@@ -311,3 +379,4 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 
 - Full hledger CoA mapping (`import_hledger` command). [#145]
 - Persistent AI defaults table (`get_ai_defaults` command). [#144]
+- QIF security-trade import + split-level transfer dedup. [Tier 7 follow-ups]
