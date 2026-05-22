@@ -1,19 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
 
 import type { ChatMessage, TransactionProposal } from "../components/chat/chatTypes";
 import { useChatStore } from "../stores/chatStore";
+import { makeQueryWrapper } from "../test/queryWrapper";
 import { useCommitProposal } from "./useCommitProposal";
 
-function makeWrapper() {
-  const queryClient = new QueryClient();
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return { queryClient, wrapper };
-}
+const makeWrapper = makeQueryWrapper;
 
 function seedPendingMessage(id: string, proposal: TransactionProposal): void {
   const message: ChatMessage = {
