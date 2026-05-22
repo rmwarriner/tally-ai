@@ -23,6 +23,7 @@ pub fn run() {
             commands::create_envelope,
             commands::import_hledger,
             commands::get_ai_defaults,
+            commands::set_ai_default,
             commands::undo_last_transaction,
             commands::append_chat_message,
             commands::list_chat_messages,

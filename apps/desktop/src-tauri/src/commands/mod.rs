@@ -465,20 +465,87 @@ pub async fn import_hledger(args: ImportHledgerArgs) -> Result<String, RecoveryE
     ))
 }
 
-/// Returns AI defaults (timezone, default account). Stub for Phase 1.
+/// Returns every persisted AI default for the current household. Keys
+/// the table recognises are listed in `core::ai_defaults::KNOWN_KEYS`;
+/// missing keys are simply absent from the returned map.
 #[tauri::command]
 pub async fn get_ai_defaults(
     state: State<'_, AppState>,
-) -> Result<serde_json::Value, RecoveryError> {
-    let hh_guard = state.household_id.lock().expect("household_id lock");
-    if hh_guard.is_none() {
-        return Ok(serde_json::json!({ "status": "No household configured" }));
-    }
-    // TODO(phase2): read from a persisted defaults table
-    Ok(serde_json::json!({
-        "timezone": "configured during setup",
-        "payment_account": "Checking"
-    }))
+) -> Result<std::collections::HashMap<String, String>, RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
+    crate::core::ai_defaults::get_all(&pool, &household_id)
+        .await
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
+}
+
+#[derive(Deserialize)]
+pub struct SetAiDefaultArgs {
+    pub key: String,
+    pub value: String,
+}
+
+/// Sets one persisted AI default. Validates the key (must appear in
+/// `KNOWN_KEYS`) and the value shape per key.
+#[tauri::command]
+pub async fn set_ai_default(
+    state: State<'_, AppState>,
+    args: SetAiDefaultArgs,
+) -> Result<(), RecoveryError> {
+    let pool = state
+        .pool
+        .lock()
+        .expect("pool lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Database not open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("household_id lock")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("Household not set"))?;
+    crate::core::ai_defaults::set(&pool, &household_id, &args.key, &args.value, now_ms())
+        .await
+        .map_err(|e| match e {
+            crate::core::ai_defaults::AiDefaultsError::UnknownKey(k) => RecoveryError::new(
+                format!(
+                    "Unknown AI default key '{k}'. Allowed: {}.",
+                    crate::core::ai_defaults::KNOWN_KEYS.join(", ")
+                ),
+                NonEmpty::new(
+                    RecoveryAction {
+                        kind: RecoveryKind::EditField,
+                        label: "Use one of the allowed keys".to_string(),
+                        is_primary: true,
+                    },
+                    vec![],
+                ),
+            ),
+            crate::core::ai_defaults::AiDefaultsError::InvalidValue { key, reason } => {
+                RecoveryError::new(
+                    format!("Value for {key} is invalid: {reason}."),
+                    NonEmpty::new(
+                        RecoveryAction {
+                            kind: RecoveryKind::EditField,
+                            label: "Retype the value".to_string(),
+                            is_primary: true,
+                        },
+                        vec![],
+                    ),
+                )
+            }
+            other => RecoveryError::show_help(other.to_string()),
+        })
 }
 
 /// Reverses the most recently posted, non-opening-balance transaction.

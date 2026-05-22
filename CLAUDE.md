@@ -282,6 +282,23 @@ a chat interface. There are no forms and no edit screens — all writes go throu
   message carrying the **same** user-facing text — refactor that breaks
   either side now fails loud.
 
+**Phase 2 Tier 5 — persistent AI defaults (#144):**
+- Migration 0011 adds `ai_defaults(household_id, key, value, updated_at)` with
+  composite PK on `(household_id, key)`.
+- `core::ai_defaults` exposes `get_all(pool, household_id)` and
+  `set(pool, household_id, key, value, now_ms)`. Keys must appear in
+  `KNOWN_KEYS = [default_payment_account, default_currency,
+  confirm_threshold_cents]`; unknown keys are rejected (adding a new default
+  is a code change, not a runtime free-for-all).
+- Per-key validation: `confirm_threshold_cents` parses as `i64`,
+  `default_currency` must be 3 uppercase letters, `default_payment_account`
+  must be non-empty. Bad values return `RecoveryKind::EditField`.
+- Tauri commands: `get_ai_defaults` now reads the table (was hardcoded JSON);
+  new `set_ai_default(key, value)` writes via `core::ai_defaults::set`.
+- `/defaults` slash command extended to accept `key=value` setter form
+  (e.g., `/defaults default_currency=USD`). No-arg form still renders the
+  artifact card.
+
 **Phase 2 Tier 1 — security hardening (#142, #143):**
 - CSPRNG (#142): `commands::create_household` now uses
   `crate::crypto::generate_salt` (rand crate's thread RNG, CSPRNG-quality)
@@ -310,4 +327,3 @@ a chat interface. There are no forms and no edit screens — all writes go throu
 ## Phase 2 stubs (TODO(phase2) in code)
 
 - Full hledger CoA mapping (`import_hledger` command). [#145]
-- Persistent AI defaults table (`get_ai_defaults` command). [#144]
