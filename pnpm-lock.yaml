@@ -19,7 +19,7 @@ importers:
         version: link:../../packages/core-types
       '@tanstack/react-query':
         specifier: ^5
-        version: 5.100.10(react@19.2.5)
+        version: 5.100.10(react@19.2.6)
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.0
@@ -28,16 +28,16 @@ importers:
         version: 2.3.5
       react:
         specifier: ^19
-        version: 19.2.5
+        version: 19.2.6
       react-dom:
         specifier: ^19
-        version: 19.2.5(react@19.2.5)
+        version: 19.2.5(react@19.2.6)
       ulid:
         specifier: ^3.0.2
         version: 3.0.2
       zustand:
         specifier: ^5
-        version: 5.0.13(@types/react@19.2.14)(react@19.2.5)
+        version: 5.0.13(@types/react@19.2.15)(react@19.2.6)
     devDependencies:
       '@playwright/test':
         specifier: ^1.60.0
@@ -50,13 +50,13 @@ importers:
         version: 6.9.1
       '@testing-library/react':
         specifier: ^16.3.2
-        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)(react-dom@19.2.5(react@19.2.6))(react@19.2.6)
       '@types/react':
         specifier: ^19
-        version: 19.2.14
+        version: 19.2.15
       '@types/react-dom':
         specifier: ^19
-        version: 19.2.3(@types/react@19.2.14)
+        version: 19.2.3(@types/react@19.2.15)
       '@typescript-eslint/eslint-plugin':
         specifier: ^8.59.3
         version: 8.59.3(@typescript-eslint/parser@8.59.2(eslint@10.4.0)(typescript@6.0.3))(eslint@10.4.0)(typescript@6.0.3)
@@ -524,8 +524,8 @@ packages:
     peerDependencies:
       '@types/react': ^19.2.0
 
-  '@types/react@19.2.14':
-    resolution: {integrity: sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==}
+  '@types/react@19.2.15':
+    resolution: {integrity: sha512-eRwcGNHve+E8qtEQSSRl6urh+rFop4v8gm6O8rGv25CodbvFdLjA1vVQ1KkiFE0w0UPOnb8tDiFKL5lp0rtY5Q==}
 
   '@typescript-eslint/eslint-plugin@8.59.3':
     resolution: {integrity: sha512-PwFvSKsXGShKGW6n5bZOhGHEcCZXM8HofLK9fNsEwZXzFRjoY+XT1Vsf1zgyXdwTr0ZYz1/2tkZ0DBTT9jZjhw==}
@@ -1161,8 +1161,8 @@ packages:
   react-is@17.0.2:
     resolution: {integrity: sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==}
 
-  react@19.2.5:
-    resolution: {integrity: sha512-llUJLzz1zTUBrskt2pwZgLq59AemifIftw4aB7JxOqf1HY2FDaGDxgwpAPVzHU1kdWabH7FauP4i1oEeer2WCA==}
+  react@19.2.6:
+    resolution: {integrity: sha512-sfWGGfavi0xr8Pg0sVsyHMAOziVYKgPLNrS7ig+ivMNb3wbCBw3KxtflsGBAwD3gYQlE/AEZsTLgToRrSCjb0Q==}
     engines: {node: '>=0.10.0'}
 
   redent@3.0.0:
@@ -1647,10 +1647,10 @@ snapshots:
 
   '@tanstack/query-core@5.100.10': {}
 
-  '@tanstack/react-query@5.100.10(react@19.2.5)':
+  '@tanstack/react-query@5.100.10(react@19.2.6)':
     dependencies:
       '@tanstack/query-core': 5.100.10
-      react: 19.2.5
+      react: 19.2.6
 
   '@tauri-apps/api@2.11.0': {}
 
@@ -1725,15 +1725,15 @@ snapshots:
       picocolors: 1.1.1
       redent: 3.0.0
 
-  '@testing-library/react@16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)':
+  '@testing-library/react@16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)(react-dom@19.2.5(react@19.2.6))(react@19.2.6)':
     dependencies:
       '@babel/runtime': 7.29.2
       '@testing-library/dom': 10.4.1
-      react: 19.2.5
-      react-dom: 19.2.5(react@19.2.5)
+      react: 19.2.6
+      react-dom: 19.2.5(react@19.2.6)
     optionalDependencies:
-      '@types/react': 19.2.14
-      '@types/react-dom': 19.2.3(@types/react@19.2.14)
+      '@types/react': 19.2.15
+      '@types/react-dom': 19.2.3(@types/react@19.2.15)
 
   '@tybys/wasm-util@0.10.2':
     dependencies:
@@ -1755,11 +1755,11 @@ snapshots:
 
   '@types/json-schema@7.0.15': {}
 
-  '@types/react-dom@19.2.3(@types/react@19.2.14)':
+  '@types/react-dom@19.2.3(@types/react@19.2.15)':
     dependencies:
-      '@types/react': 19.2.14
+      '@types/react': 19.2.15
 
-  '@types/react@19.2.14':
+  '@types/react@19.2.15':
     dependencies:
       csstype: 3.2.3
 
@@ -2391,14 +2391,14 @@ snapshots:
 
   punycode@2.3.1: {}
 
-  react-dom@19.2.5(react@19.2.5):
+  react-dom@19.2.5(react@19.2.6):
     dependencies:
-      react: 19.2.5
+      react: 19.2.6
       scheduler: 0.27.0
 
   react-is@17.0.2: {}
 
-  react@19.2.5: {}
+  react@19.2.6: {}
 
   redent@3.0.0:
     dependencies:
@@ -2579,7 +2579,7 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zustand@5.0.13(@types/react@19.2.14)(react@19.2.5):
+  zustand@5.0.13(@types/react@19.2.15)(react@19.2.6):
     optionalDependencies:
-      '@types/react': 19.2.14
-      react: 19.2.5
+      '@types/react': 19.2.15
+      react: 19.2.6
