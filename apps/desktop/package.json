@@ -37,7 +37,7 @@
     "@vitejs/plugin-react": "^6",
     "@vitest/coverage-v8": "^4.1.7",
     "axe-core": "^4.11.4",
-    "eslint": "^10.3.0",
+    "eslint": "^10.4.0",
     "jsdom": "^29.1.1",
     "typescript": "^6",
     "vite": "^8",
