@@ -20,6 +20,7 @@ function makeDeps(overrides: Partial<Parameters<typeof dispatchSlashCommand>[2]>
     addArtifactMessage: vi.fn(),
     undoLastTransaction: vi.fn().mockResolvedValue(undefined),
     getAIDefaults: vi.fn().mockResolvedValue({ timezone: "America/Chicago", preferred_accounts: ["Checking"] }),
+    setAIDefault: vi.fn().mockResolvedValue(undefined),
     invalidateSidebar: vi.fn(),
     getSensitivity: vi.fn().mockResolvedValue("normal"),
     setSensitivity: vi.fn().mockResolvedValue(undefined),
@@ -105,6 +106,47 @@ describe("dispatchSlashCommand", () => {
     expect(deps.addArtifactMessage).toHaveBeenCalledWith(
       "AI Defaults",
       expect.stringContaining("timezone: America/Chicago"),
+    );
+  });
+
+  it("/defaults key=value calls setAIDefault and confirms", async () => {
+    const deps = makeDeps();
+    await dispatchSlashCommand("/defaults", "default_currency=USD", deps);
+
+    expect(deps.setAIDefault).toHaveBeenCalledWith("default_currency", "USD");
+    expect(deps.addSystemMessage).toHaveBeenCalledWith(
+      "Set default_currency to USD.",
+      "info",
+    );
+  });
+
+  it("/defaults setter trims surrounding whitespace", async () => {
+    const deps = makeDeps();
+    await dispatchSlashCommand("/defaults", "  default_currency  =  USD  ", deps);
+
+    expect(deps.setAIDefault).toHaveBeenCalledWith("default_currency", "USD");
+  });
+
+  it("/defaults without '=' shows the usage error", async () => {
+    const deps = makeDeps();
+    await dispatchSlashCommand("/defaults", "default_currency USD", deps);
+
+    expect(deps.setAIDefault).not.toHaveBeenCalled();
+    expect(deps.addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining("key=value"),
+      "error",
+    );
+  });
+
+  it("/defaults setter surfaces backend error message", async () => {
+    const deps = makeDeps({
+      setAIDefault: vi.fn().mockRejectedValue({ message: "Unknown AI default key 'foo'." }),
+    });
+    await dispatchSlashCommand("/defaults", "foo=bar", deps);
+
+    expect(deps.addSystemMessage).toHaveBeenCalledWith(
+      "Unknown AI default key 'foo'.",
+      "error",
     );
   });
 
