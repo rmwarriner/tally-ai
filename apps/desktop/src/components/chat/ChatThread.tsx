@@ -18,9 +18,23 @@ interface ChatThreadProps {
   onConfirmMapping?: () => void;
   onAcceptReconcile?: () => void;
   onRollbackReconcile?: () => void;
+  onSubmitQifPath?: (path: string) => void;
+  onConfirmQifMapping?: () => void;
+  onAcceptQifReconcile?: () => void;
+  onRollbackQifReconcile?: () => void;
 }
 
-export function ChatThread({ onPromptClick, onSubmitGnuCashPath, onConfirmMapping, onAcceptReconcile, onRollbackReconcile }: ChatThreadProps = {}) {
+export function ChatThread({
+  onPromptClick,
+  onSubmitGnuCashPath,
+  onConfirmMapping,
+  onAcceptReconcile,
+  onRollbackReconcile,
+  onSubmitQifPath,
+  onConfirmQifMapping,
+  onAcceptQifReconcile,
+  onRollbackQifReconcile,
+}: ChatThreadProps = {}) {
   const threadRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const previousNewestMessageIdRef = useRef<string | null>(null);
@@ -138,6 +152,10 @@ export function ChatThread({ onPromptClick, onSubmitGnuCashPath, onConfirmMappin
             onSubmitGnuCashPath={onSubmitGnuCashPath}
             onConfirmMapping={onConfirmMapping}
             onAcceptReconcile={onAcceptReconcile}
+            onSubmitQifPath={onSubmitQifPath}
+            onConfirmQifMapping={onConfirmQifMapping}
+            onAcceptQifReconcile={onAcceptQifReconcile}
+            onRollbackQifReconcile={onRollbackQifReconcile}
             onRollbackReconcile={onRollbackReconcile}
           />
         ) : (

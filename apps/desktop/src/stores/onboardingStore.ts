@@ -13,6 +13,11 @@ export type OnboardingPhase =
   | "gnucash_import_committing"
   | "gnucash_import_reconciling"
   | "gnucash_import_done"
+  | "qif_import_pick_file"
+  | "qif_import_mapping"
+  | "qif_import_committing"
+  | "qif_import_reconciling"
+  | "qif_import_done"
   | "complete";
 
 export type FreshStep =
@@ -58,6 +63,8 @@ interface OnboardingStore {
   draft: OnboardingDraft;
   gnucashPickedPath: string | null;
   gnucashImportId: string | null;
+  qifPickedPath: string | null;
+  qifImportId: string | null;
 
   setPhase: (phase: OnboardingPhase) => void;
   setFreshStep: (step: FreshStep) => void;
@@ -68,6 +75,8 @@ interface OnboardingStore {
   advanceAccountIndex: () => void;
   setGnuCashPickedPath: (path: string | null) => void;
   setGnuCashImportId: (id: string | null) => void;
+  setQifPickedPath: (path: string | null) => void;
+  setQifImportId: (id: string | null) => void;
 }
 
 const INITIAL_DRAFT: OnboardingDraft = {
@@ -87,6 +96,8 @@ function makeInitialState() {
     draft: { ...INITIAL_DRAFT, accounts: [], envelopes: [] },
     gnucashPickedPath: null as string | null,
     gnucashImportId: null as string | null,
+    qifPickedPath: null as string | null,
+    qifImportId: null as string | null,
   };
 }
 
@@ -120,6 +131,10 @@ export const useOnboardingStore = create<OnboardingStore>((set) => ({
   setGnuCashPickedPath: (path) => set({ gnucashPickedPath: path }),
 
   setGnuCashImportId: (id) => set({ gnucashImportId: id }),
+
+  setQifPickedPath: (path) => set({ qifPickedPath: path }),
+
+  setQifImportId: (id) => set({ qifImportId: id }),
 }));
 
 // Exported for test resets

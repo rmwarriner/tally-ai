@@ -36,6 +36,8 @@ pub struct AppState {
     pub pool: Mutex<Option<SqlitePool>>,
     pub household_id: Mutex<Option<String>>,
     pub active_import: Mutex<Option<crate::core::import::gnucash::ImportPlan>>,
+    pub active_qif_import: Mutex<Option<crate::core::import::qif::QifImportPlan>>,
+    pub active_qif_skipped_trades: Mutex<u32>,
 }
 
 impl AppState {
@@ -44,6 +46,8 @@ impl AppState {
             pool: Mutex::new(None),
             household_id: Mutex::new(None),
             active_import: Mutex::new(None),
+            active_qif_import: Mutex::new(None),
+            active_qif_skipped_trades: Mutex::new(0),
         }
     }
 }
@@ -1274,6 +1278,214 @@ pub async fn reconcile_gnucash_import(
         .map_err(|e| {
             RecoveryError::new(
                 format!("Could not reconcile the GnuCash import: {e}"),
+                NonEmpty::new(
+                    RecoveryAction {
+                        kind: RecoveryKind::ShowHelp,
+                        label: "Get help".to_string(),
+                        is_primary: true,
+                    },
+                    vec![RecoveryAction {
+                        kind: RecoveryKind::Discard,
+                        label: "Discard import".to_string(),
+                        is_primary: false,
+                    }],
+                ),
+            )
+        })
+}
+
+// ── QIF import commands (Tier 7) ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ReadQifArgs {
+    pub path: String,
+}
+
+#[tauri::command]
+pub async fn read_qif_file(
+    args: ReadQifArgs,
+) -> Result<crate::core::import::qif::QifPreview, RecoveryError> {
+    use std::path::Path;
+    crate::core::import::qif::reader::preview(Path::new(&args.path))
+        .await
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
+}
+
+#[derive(Deserialize)]
+pub struct BuildQifPlanArgs {
+    pub path: String,
+}
+
+#[tauri::command]
+pub async fn qif_build_default_plan(
+    state: State<'_, AppState>,
+    args: BuildQifPlanArgs,
+) -> Result<crate::core::import::qif::QifImportPlan, RecoveryError> {
+    use crate::core::import::qif::{mapper, reader};
+    use std::path::Path;
+
+    let household_id = {
+        let g = state.household_id.lock().expect("household_id");
+        g.clone()
+            .ok_or_else(|| RecoveryError::show_help("No household configured"))?
+    };
+    let book = reader::read(Path::new(&args.path))
+        .await
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
+
+    let import_id = new_ulid();
+    let plan = mapper::build_default_plan(household_id, import_id, &book, new_ulid)
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
+
+    *state.active_qif_import.lock().expect("active_qif_import") = Some(plan.clone());
+    *state.active_qif_skipped_trades.lock().expect("skipped") = book.skipped_security_trades;
+    Ok(plan)
+}
+
+#[derive(Deserialize)]
+pub struct ApplyQifMappingEditArgs {
+    pub edit: crate::core::import::qif::QifMappingEdit,
+}
+
+#[tauri::command]
+pub async fn qif_apply_mapping_edit(
+    state: State<'_, AppState>,
+    args: ApplyQifMappingEditArgs,
+) -> Result<crate::core::import::qif::QifImportPlan, RecoveryError> {
+    use crate::core::import::qif::mapper;
+
+    let mut guard = state.active_qif_import.lock().expect("active_qif_import");
+    let plan = guard
+        .as_mut()
+        .ok_or_else(|| RecoveryError::show_help("No active QIF import plan"))?;
+    mapper::apply_mapping_edit(plan, args.edit)
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
+    Ok(plan.clone())
+}
+
+#[tauri::command]
+pub async fn commit_qif_import(
+    state: State<'_, AppState>,
+) -> Result<crate::core::import::qif::QifImportReceipt, RecoveryError> {
+    let pool_opt = state.pool.lock().expect("pool").clone();
+    let pool = pool_opt.ok_or_else(|| RecoveryError::show_help("No database open"))?;
+
+    let plan = {
+        let g = state.active_qif_import.lock().expect("active_qif_import");
+        g.clone()
+            .ok_or_else(|| RecoveryError::show_help("No active QIF import plan"))?
+    };
+    let skipped = *state.active_qif_skipped_trades.lock().expect("skipped");
+
+    let receipt = crate::core::import::qif::committer::commit(&pool, &plan, skipped, now_ms())
+        .await
+        .map_err(|e| {
+            RecoveryError::new(
+                format!("Could not import the QIF file: {e}"),
+                NonEmpty::new(
+                    RecoveryAction {
+                        kind: RecoveryKind::ShowHelp,
+                        label: "Get help".to_string(),
+                        is_primary: true,
+                    },
+                    vec![RecoveryAction {
+                        kind: RecoveryKind::Discard,
+                        label: "Discard import".to_string(),
+                        is_primary: false,
+                    }],
+                ),
+            )
+        })?;
+
+    *state.active_qif_import.lock().expect("active_qif_import") = None;
+    *state.active_qif_skipped_trades.lock().expect("skipped") = 0;
+    Ok(receipt)
+}
+
+#[derive(Deserialize)]
+pub struct QifRollbackArgs {
+    pub import_id: String,
+}
+
+#[tauri::command]
+pub async fn rollback_qif_import(
+    state: State<'_, AppState>,
+    args: QifRollbackArgs,
+) -> Result<(), RecoveryError> {
+    let pool_opt = state.pool.lock().expect("pool").clone();
+    let pool = pool_opt.ok_or_else(|| RecoveryError::show_help("No database open"))?;
+    crate::core::import::qif::committer::rollback(&pool, &args.import_id)
+        .await
+        .map_err(|e| RecoveryError::show_help(e.to_string()))
+}
+
+#[derive(Deserialize)]
+pub struct QifReconcileArgs {
+    pub import_id: String,
+    pub path: String,
+}
+
+#[tauri::command]
+pub async fn reconcile_qif_import(
+    state: State<'_, AppState>,
+    args: QifReconcileArgs,
+) -> Result<crate::core::import::qif::QifBalanceReportArtifact, RecoveryError> {
+    use crate::core::import::qif::{reader, reconcile, QifAccountMapping, QifImportPlan};
+    use std::path::Path;
+
+    let pool_opt = state.pool.lock().expect("pool").clone();
+    let pool = pool_opt.ok_or_else(|| RecoveryError::show_help("No database open"))?;
+    let household_id = state
+        .household_id
+        .lock()
+        .expect("hh")
+        .clone()
+        .ok_or_else(|| RecoveryError::show_help("No household configured"))?;
+
+    let book = reader::read(Path::new(&args.path))
+        .await
+        .map_err(|e| RecoveryError::show_help(e.to_string()))?;
+
+    // QIF has no GUIDs; match imported accounts back to QIF account names.
+    // Names are unique within a household per the duplicate check at mapping
+    // time, so the join is safe.
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: String,
+        name: String,
+    }
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT id, name FROM accounts WHERE household_id = ? AND import_id = ?",
+    )
+    .bind(&household_id)
+    .bind(&args.import_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| RecoveryError::show_help(e.to_string()))?;
+
+    let account_mappings: Vec<QifAccountMapping> = rows
+        .into_iter()
+        .map(|r| QifAccountMapping {
+            qif_name: r.name.clone(),
+            tally_account_id: r.id,
+            tally_name: r.name,
+            tally_type: crate::core::import::qif::AccountType::Asset,
+            tally_normal_balance: crate::core::import::qif::NormalBalance::Debit,
+        })
+        .collect();
+
+    let plan = QifImportPlan {
+        household_id,
+        import_id: args.import_id,
+        account_mappings,
+        transactions: vec![],
+    };
+
+    reconcile::reconcile(&pool, &plan, &book)
+        .await
+        .map_err(|e| {
+            RecoveryError::new(
+                format!("Could not reconcile the QIF import: {e}"),
                 NonEmpty::new(
                     RecoveryAction {
                         kind: RecoveryKind::ShowHelp,
