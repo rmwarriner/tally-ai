@@ -19,7 +19,7 @@ ulid = "1"
 argon2 = "0.5"
 bip39 = { version = "2", features = ["rand"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-chrono-tz = "0.9"
+chrono-tz = "0.10"
 rand = "0.8"
 tauri = { version = "2", features = [] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
